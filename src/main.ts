@@ -31,7 +31,7 @@ async function bootstrap() {
 
   // Swagger Documentation
   const config = new DocumentBuilder()
-    .setTitle('Nomad Connect API')
+    .setTitle('Meet Me Halfway API')
     .setDescription('Digital Nomad Connection Platform API')
     .setVersion('1.0')
     .addBearerAuth()

@@ -14,6 +14,7 @@ import {
   SignUpDto,
   SignInDto,
   VerifyEmailDto,
+  VerifyPhoneDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   RefreshTokenDto,
@@ -78,6 +79,31 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid refresh token' })
   async refresh(@Body() refreshTokenDto: RefreshTokenDto): Promise<AuthResponseDto> {
     return this.authService.refreshToken(refreshTokenDto.refreshToken);
+  }
+
+  @Post('verify-phone')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify phone number with OTP code' })
+  @ApiResponse({ status: 200, description: 'Phone verified successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired code' })
+  async verifyPhone(@Request() req, @Body() verifyPhoneDto: VerifyPhoneDto) {
+    return this.authService.verifyPhone(
+      req.user.userId,
+      verifyPhoneDto.phone,
+      verifyPhoneDto.code,
+    );
+  }
+
+  @Post('send-phone-otp')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send OTP to phone number' })
+  @ApiResponse({ status: 200, description: 'OTP sent successfully' })
+  async sendPhoneOtp(@Request() req) {
+    return this.authService.sendPhoneOtp(req.user.userId);
   }
 
   @Post('mfa/enable')

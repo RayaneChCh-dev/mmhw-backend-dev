@@ -162,8 +162,115 @@ export class AuthService {
       };
     }
 
+    // Check if phone verification is required
+      if (user.phone && !user.phoneVerified) {
+      // Send phone OTP
+      const otp = this.generateOtp();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      await this.db.insert(otpCodes).values({
+        userId: user.id,
+        phone: user.phone,
+        code: otp,
+        type: 'phone_verification',
+        expiresAt,
+      });
+
+      // TODO: Send SMS with OTP
+      console.log(`Phone OTP for ${user.phone}: ${otp}`);
+
+      return {
+        requiresPhoneVerification: true,
+        accessToken: '',
+        refreshToken: '',
+        user: this.sanitizeUser(user),
+      };
+    }
+
     return this.generateTokens(user);
   }
+
+  async sendPhoneOtp(userId: string): Promise<{ message: string }> {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (!user.phone) {
+      throw new BadRequestException('Phone number not set');
+    }
+
+    if (user.phoneVerified) {
+      throw new BadRequestException('Phone already verified');
+    }
+
+    const otp = this.generateOtp();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await this.db.insert(otpCodes).values({
+      userId: user.id,
+      phone: user.phone,
+      code: otp,
+      type: 'phone_verification',
+      expiresAt,
+    });
+
+    // TODO: Send SMS with OTP
+    console.log(`Phone OTP for ${user.phone}: ${otp}`);
+
+    return { message: 'Verification code sent to your phone' };
+  }
+
+  async verifyPhone(userId: string, phone: string, code: string): Promise<{ message: string }> {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    const otpRecord = await this.db.query.otpCodes.findFirst({
+      where: and(
+        eq(otpCodes.phone, phone),
+        eq(otpCodes.code, code),
+        eq(otpCodes.type, 'phone_verification'),
+      ),
+    });
+
+    if (!otpRecord) {
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    if (new Date() > otpRecord.expiresAt) {
+      throw new BadRequestException('Verification code has expired');
+    }
+
+    if (otpRecord.verifiedAt) {
+      throw new BadRequestException('Code already used');
+    }
+
+    // Mark code as verified
+    await this.db
+      .update(otpCodes)
+      .set({ verifiedAt: new Date() })
+      .where(eq(otpCodes.id, otpRecord.id));
+
+    // Update user
+    await this.db
+      .update(users)
+      .set({ 
+        phone,
+        phoneVerified: true 
+      })
+      .where(eq(users.id, user.id));
+
+    return { message: 'Phone verified successfully' };
+  }
+  
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
     const { email } = forgotPasswordDto;

@@ -43,6 +43,24 @@ export class VerifyEmailDto {
   email: string;
 }
 
+export class VerifyPhoneDto {
+  @ApiProperty({ example: '123456' })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(6)
+  code: string;
+
+  @ApiProperty({ example: '+1234567890' })
+  @IsString()
+  phone: string;
+}
+
+export class SendPhoneOtpDto {
+  @ApiProperty({ example: '+1234567890' })
+  @IsString()
+  phone: string;
+}
+
 export class VerifyOtpDto {
   @ApiProperty({ example: '+1234567890' })
   @IsString()
@@ -116,6 +134,7 @@ export class AuthResponseDto {
     id: string;
     email: string;
     emailVerified: boolean;
+    phoneVerified: boolean;
     firstName?: string;
     lastName?: string;
     avatar?: string;
@@ -128,4 +147,7 @@ export class AuthResponseDto {
 
   @ApiProperty({ required: false })
   mfaToken?: string;
+
+  @ApiProperty({ required: false })
+  requiresPhoneVerification?: boolean;
 }

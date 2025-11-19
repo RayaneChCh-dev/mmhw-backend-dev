@@ -1,7 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { ConfigService } from '@nestjs/config';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -14,14 +14,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    if (!payload.sub) {
-      throw new UnauthorizedException();
-    }
-
-    return {
-      userId: payload.sub,
-      email: payload.email,
-      role: payload.role,
+    // Map 'sub' to 'userId' so controllers can use req.user.userId
+    return { 
+      userId: payload.sub,  // ← This is the key fix!
+      email: payload.email, 
+      role: payload.role 
     };
   }
 }
