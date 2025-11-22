@@ -15,6 +15,13 @@
       "when": 1762875261355,
       "tag": "0001_chemical_silhouette",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1763828994877,
+      "tag": "0002_sleepy_marrow",
+      "breakpoints": true
     }
   ]
 }

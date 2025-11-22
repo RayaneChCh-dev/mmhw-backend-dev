@@ -35,9 +35,10 @@ async function bootstrap() {
     .setDescription('Digital Nomad Connection Platform API')
     .setVersion('1.0')
     .addBearerAuth()
-    .addTag('Authentication')
-    .addTag('Users')
-    .addTag('Profile')
+    .addTag('Authentication', 'User authentication and authorization endpoints')
+    .addTag('Users', 'User profile and management endpoints')
+    .addTag('Chat', 'Direct messaging between users')
+    .addTag('Events', 'Event creation, matching, and management')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
