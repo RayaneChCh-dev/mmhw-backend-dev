@@ -5,7 +5,6 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './user/user.module';
-import { ChatModule } from './chat/chat.module';
 import { EventsModule } from './event/event.module';
 
 @Module({
@@ -23,7 +22,6 @@ import { EventsModule } from './event/event.module';
     DatabaseModule,
     AuthModule,
     UsersModule,
-    ChatModule,
     EventsModule,
   ],
   controllers: [],
