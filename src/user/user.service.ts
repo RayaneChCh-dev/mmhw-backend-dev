@@ -23,6 +23,7 @@ import {
   UpdateInterestsDto,
   CompleteProfileDto,
   UpdateLocationDto,
+  UpdatePushTokenDto,
   UserResponseDto,
 } from './dto/user.dto';
 
@@ -90,7 +91,7 @@ export class UsersService {
     userId: string,
     completeProfileDto: CompleteProfileDto,
   ): Promise<UserResponseDto> {
-    const { skills: skillNames, attitudes: attitudeNames, interests: interestNames, ...profileData } =
+    const { skills: skillIds, attitudes: attitudeIds, interests: interestIds, ...profileData } =
       completeProfileDto;
 
     // Update basic profile
@@ -104,18 +105,18 @@ export class UsersService {
       .where(eq(users.id, userId));
 
     // Update skills if provided
-    if (skillNames && skillNames.length > 0) {
-      await this.updateUserSkills(userId, skillNames);
+    if (skillIds && skillIds.length > 0) {
+      await this.updateUserSkills(userId, skillIds);
     }
 
     // Update attitudes if provided
-    if (attitudeNames && attitudeNames.length > 0) {
-      await this.updateUserAttitudes(userId, attitudeNames);
+    if (attitudeIds && attitudeIds.length > 0) {
+      await this.updateUserAttitudes(userId, attitudeIds);
     }
 
     // Update interests if provided
-    if (interestNames && interestNames.length > 0) {
-      await this.updateUserInterests(userId, interestNames);
+    if (interestIds && interestIds.length > 0) {
+      await this.updateUserInterests(userId, interestIds);
     }
 
     return this.getProfile(userId);
@@ -200,101 +201,86 @@ export class UsersService {
   }
 
   // Helper methods
-  private async updateUserSkills(userId: string, skillNames: string[]) {
+  private async updateUserSkills(userId: string, skillIds: string[]) {
     // Delete existing skills
     await this.db.delete(userSkills).where(eq(userSkills.userId, userId));
 
-    if (skillNames.length === 0) return;
+    if (skillIds.length === 0) return;
 
-    // Get or create skills
-    const skillRecords = await Promise.all(
-      skillNames.map(async (name) => {
-        let skill = await this.db.query.skills.findFirst({
-          where: eq(skills.name, name),
-        });
+    // Validate that all skill IDs exist
+    const existingSkills = await this.db.query.skills.findMany({
+      where: inArray(skills.id, skillIds),
+    });
 
-        if (!skill) {
-          [skill] = await this.db
-            .insert(skills)
-            .values({ name })
-            .returning();
-        }
-
-        return skill;
-      }),
-    );
+    if (existingSkills.length !== skillIds.length) {
+      const foundIds = existingSkills.map(s => s.id);
+      const missingIds = skillIds.filter(id => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Invalid skill IDs: ${missingIds.join(', ')}`
+      );
+    }
 
     // Create user-skill associations
     await this.db.insert(userSkills).values(
-      skillRecords.map((skill) => ({
+      skillIds.map((skillId) => ({
         userId,
-        skillId: skill.id,
+        skillId,
       })),
     );
   }
 
-  private async updateUserAttitudes(userId: string, attitudeNames: string[]) {
+  private async updateUserAttitudes(userId: string, attitudeIds: string[]) {
     // Delete existing attitudes
     await this.db.delete(userAttitudes).where(eq(userAttitudes.userId, userId));
 
-    if (attitudeNames.length === 0) return;
+    if (attitudeIds.length === 0) return;
 
-    // Get or create attitudes
-    const attitudeRecords = await Promise.all(
-      attitudeNames.map(async (name) => {
-        let attitude = await this.db.query.attitudes.findFirst({
-          where: eq(attitudes.name, name),
-        });
+    // Validate that all attitude IDs exist
+    const existingAttitudes = await this.db.query.attitudes.findMany({
+      where: inArray(attitudes.id, attitudeIds),
+    });
 
-        if (!attitude) {
-          [attitude] = await this.db
-            .insert(attitudes)
-            .values({ name })
-            .returning();
-        }
-
-        return attitude;
-      }),
-    );
+    if (existingAttitudes.length !== attitudeIds.length) {
+      const foundIds = existingAttitudes.map(a => a.id);
+      const missingIds = attitudeIds.filter(id => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Invalid attitude IDs: ${missingIds.join(', ')}`
+      );
+    }
 
     // Create user-attitude associations
     await this.db.insert(userAttitudes).values(
-      attitudeRecords.map((attitude) => ({
+      attitudeIds.map((attitudeId) => ({
         userId,
-        attitudeId: attitude.id,
+        attitudeId,
       })),
     );
   }
 
-  private async updateUserInterests(userId: string, interestNames: string[]) {
+  private async updateUserInterests(userId: string, interestIds: string[]) {
     // Delete existing interests
     await this.db.delete(userInterests).where(eq(userInterests.userId, userId));
 
-    if (interestNames.length === 0) return;
+    if (interestIds.length === 0) return;
 
-    // Get or create interests
-    const interestRecords = await Promise.all(
-      interestNames.map(async (name) => {
-        let interest = await this.db.query.interests.findFirst({
-          where: eq(interests.name, name),
-        });
+    // Validate that all interest IDs exist
+    const existingInterests = await this.db.query.interests.findMany({
+      where: inArray(interests.id, interestIds),
+    });
 
-        if (!interest) {
-          [interest] = await this.db
-            .insert(interests)
-            .values({ name })
-            .returning();
-        }
-
-        return interest;
-      }),
-    );
+    if (existingInterests.length !== interestIds.length) {
+      const foundIds = existingInterests.map(i => i.id);
+      const missingIds = interestIds.filter(id => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Invalid interest IDs: ${missingIds.join(', ')}`
+      );
+    }
 
     // Create user-interest associations
     await this.db.insert(userInterests).values(
-      interestRecords.map((interest) => ({
+      interestIds.map((interestId) => ({
         userId,
-        interestId: interest.id,
+        interestId,
       })),
     );
   }
@@ -321,5 +307,26 @@ export class UsersService {
 
   async getAvailableInterests() {
     return await this.db.query.interests.findMany();
+  }
+
+  async updatePushToken(
+    userId: string,
+    updatePushTokenDto: UpdatePushTokenDto,
+  ): Promise<{ message: string }> {
+    await this.db
+      .update(users)
+      .set({ pushToken: updatePushTokenDto.pushToken })
+      .where(eq(users.id, userId));
+
+    return { message: 'Push token updated successfully' };
+  }
+
+  async removePushToken(userId: string): Promise<{ message: string }> {
+    await this.db
+      .update(users)
+      .set({ pushToken: null })
+      .where(eq(users.id, userId));
+
+    return { message: 'Push token removed successfully' };
   }
 }

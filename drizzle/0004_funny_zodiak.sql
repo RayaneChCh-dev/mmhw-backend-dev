@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "notification_preferences" json DEFAULT '{"pushEnabled":true,"eventRequests":true,"eventAccepted":true,"newMessages":true,"eventCancelled":true}'::json;

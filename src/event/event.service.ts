@@ -1,5 +1,8 @@
 import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { DATABASE_CONNECTION } from '../database/database.module';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { EmailService } from '../notifications/email.service';
 import {
   events,
   eventRequests,
@@ -20,6 +23,7 @@ import {
   SubmitEventFeedbackDto,
   GetNearbyEventsDto,
   GetEventsAtHubDto,
+  GetPendingRequestsDto,
   EventStatus,
   EventRequestStatus,
   FeedbackRating,
@@ -32,7 +36,12 @@ const EVENT_DURATION_HOURS = 2; // Default event duration
 
 @Injectable()
 export class EventsService {
-  constructor(@Inject(DATABASE_CONNECTION) private db: any) {}
+  constructor(
+    @Inject(DATABASE_CONNECTION) private db: any,
+    private notificationsService: NotificationsService,
+    private notificationsGateway: NotificationsGateway,
+    private emailService: EmailService,
+  ) {}
 
   // ============================================
   // CREATE EVENT
@@ -213,8 +222,24 @@ export class EventsService {
       })
       .returning();
 
-    // TODO: Send push notification to event creator
-    // this.notificationsService.sendEventRequest(event.creatorId, userId, event);
+    // Get requester details for notification
+    const requester = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: {
+        firstName: true,
+        avatar: true,
+        avatarType: true,
+      },
+    });
+
+    // Send push notification and WebSocket event to creator
+    await this.notificationsService.sendEventRequest(event.creatorId, userId, event);
+    this.notificationsGateway.emitEventRequest(event.creatorId, {
+      eventId: event.id,
+      requesterId: userId,
+      requesterName: requester?.firstName || 'Someone',
+      event,
+    });
 
     return request;
   }
@@ -291,11 +316,85 @@ export class EventsService {
       await this.addPoints(userId, 10); // Creator gets points for accepting
       await this.addPoints(request.requesterId, 10); // Requester gets points
 
-      // TODO: Send notification to requester
-      // this.notificationsService.sendEventAccepted(request.requesterId, userId, request.event);
+      // Get creator details for notification
+      const creator = await this.db.query.users.findFirst({
+        where: eq(users.id, userId),
+        columns: {
+          firstName: true,
+          avatar: true,
+          avatarType: true,
+        },
+      });
+
+      // Send push notification and WebSocket event to requester
+      await this.notificationsService.sendEventAccepted(request.requesterId, userId, request.event);
+      this.notificationsGateway.emitRequestAccepted(request.requesterId, {
+        eventId: request.event.id,
+        creatorId: userId,
+        creatorName: creator?.firstName || 'The creator',
+        event: request.event,
+      });
     }
 
     return { message: `Request ${dto.response}` };
+  }
+
+  // ============================================
+  // GET PENDING REQUESTS
+  // ============================================
+
+  async getPendingRequests(userId: string, dto: GetPendingRequestsDto) {
+    // First, get all active events owned by the user
+    const userEventsQuery = this.db.query.events.findMany({
+      where: and(
+        eq(events.creatorId, userId),
+        eq(events.status, 'active'),
+        dto.eventId ? eq(events.id, dto.eventId) : undefined
+      ),
+      columns: { id: true },
+    });
+
+    const userEvents = await userEventsQuery;
+
+    if (userEvents.length === 0) {
+      return [];
+    }
+
+    const eventIds = userEvents.map(e => e.id);
+
+    // Get all pending requests for these events
+    const pendingRequests = await this.db.query.eventRequests.findMany({
+      where: and(
+        inArray(eventRequests.eventId, eventIds),
+        eq(eventRequests.status, 'pending')
+      ),
+      with: {
+        requester: {
+          columns: {
+            id: true,
+            firstName: true,
+            avatar: true,
+            avatarType: true,
+          },
+          with: {
+            stats: true,
+          },
+        },
+        event: {
+          columns: {
+            id: true,
+            hubName: true,
+            hubType: true,
+            activityType: true,
+            createdAt: true,
+            expiresAt: true,
+          },
+        },
+      },
+      orderBy: (eventRequests, { desc }) => [desc(eventRequests.createdAt)],
+    });
+
+    return pendingRequests;
   }
 
   // ============================================
@@ -459,9 +558,25 @@ export class EventsService {
       await this.lockChat(event.chat.id);
     }
 
-    // TODO: Send push notification to other user
+    // Get sender details for notification
+    const sender = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: {
+        firstName: true,
+        avatar: true,
+        avatarType: true,
+      },
+    });
+
+    // Send push notification and WebSocket event to other user
     const otherUserId = isCreator ? event.participantId : event.creatorId;
-    // this.notificationsService.sendNewMessage(otherUserId, userId, message.content);
+    await this.notificationsService.sendNewMessage(otherUserId, userId, message.content, eventId);
+    this.notificationsGateway.emitNewMessage(otherUserId, {
+      eventId,
+      senderId: userId,
+      senderName: sender?.firstName || 'Someone',
+      message,
+    });
 
     return message;
   }
@@ -494,9 +609,13 @@ export class EventsService {
 
     await this.incrementStats(userId, { eventsCancelled: 1 });
 
-    // TODO: Notify participant if matched
+    // Send push notification and WebSocket event to participant if matched
     if (event.participantId) {
-      // this.notificationsService.sendEventCancelled(event.participantId, event);
+      await this.notificationsService.sendEventCancelled(event.participantId, event);
+      this.notificationsGateway.emitEventCancelled(event.participantId, {
+        eventId: event.id,
+        event,
+      });
     }
 
     return { message: 'Event cancelled' };
@@ -565,7 +684,7 @@ export class EventsService {
       // Both submitted → complete event
       await this.db
         .update(events)
-        .set({ 
+        .set({
           status: 'completed',
           completedAt: new Date(),
         })
@@ -578,6 +697,38 @@ export class EventsService {
       await this.addPoints(event.participantId, 20);
       await this.updateStreak(event.creatorId);
       await this.updateStreak(event.participantId);
+
+      // Check and notify for events and points milestones
+      const creatorStats = await this.getUserStats(event.creatorId);
+      const participantStats = await this.getUserStats(event.participantId);
+
+      await this.checkAndNotifyEventsMilestone(event.creatorId, creatorStats.eventsCompleted);
+      await this.checkAndNotifyEventsMilestone(event.participantId, participantStats.eventsCompleted);
+      await this.checkAndNotifyPointsMilestone(event.creatorId, creatorStats.totalPoints);
+      await this.checkAndNotifyPointsMilestone(event.participantId, participantStats.totalPoints);
+    } else {
+      // Only one user submitted feedback → send email to the other user
+      const otherUserId = event.creatorId === userId ? event.participantId : event.creatorId;
+      const otherUser = await this.db.query.users.findFirst({
+        where: eq(users.id, otherUserId),
+      });
+
+      const currentUser = await this.db.query.users.findFirst({
+        where: eq(users.id, userId),
+      });
+
+      if (otherUser && currentUser) {
+        await this.emailService.sendEventFeedbackRequest(
+          otherUser.email,
+          otherUser.firstName || 'there',
+          {
+            activityType: event.activityType,
+            hubName: event.hubName,
+            participantName: currentUser.firstName || 'your connection',
+            eventId: event.id,
+          }
+        );
+      }
     }
 
     return { message: 'Feedback submitted' };
@@ -768,11 +919,11 @@ export class EventsService {
     today.setHours(0, 0, 0, 0);
 
     const lastMeetup = stats.lastMeetupDate ? new Date(stats.lastMeetupDate) : null;
-    
+
     if (lastMeetup) {
       lastMeetup.setHours(0, 0, 0, 0);
       const diffDays = Math.floor((today.getTime() - lastMeetup.getTime()) / (1000 * 60 * 60 * 24));
-      
+
       if (diffDays === 1) {
         // Consecutive day → increment streak
         const newStreak = stats.currentStreak + 1;
@@ -784,6 +935,9 @@ export class EventsService {
             lastMeetupDate: today,
           })
           .where(eq(userStats.userId, userId));
+
+        // Send email notification for streak milestones
+        await this.checkAndNotifyStreakMilestone(userId, newStreak);
       } else if (diffDays > 1) {
         // Streak broken → reset
         await this.db
@@ -804,6 +958,89 @@ export class EventsService {
           lastMeetupDate: today,
         })
         .where(eq(userStats.userId, userId));
+    }
+  }
+
+  private async checkAndNotifyStreakMilestone(userId: string, streak: number) {
+    // Milestone values: 3, 5, 7, 10, 30, 50, 100 days
+    const milestones = [3, 5, 7, 10, 30, 50, 100];
+
+    if (milestones.includes(streak)) {
+      const user = await this.db.query.users.findFirst({
+        where: eq(users.id, userId),
+      });
+
+      if (user) {
+        await this.emailService.sendStatsCompletionEmail(
+          user.email,
+          user.firstName || 'there',
+          {
+            type: 'streak',
+            value: streak,
+            title: `${streak}-Day Streak Achievement`,
+            description: `You've completed events for ${streak} consecutive days! Keep the momentum going!`,
+          }
+        );
+      }
+    }
+  }
+
+  private async checkAndNotifyEventsMilestone(userId: string, eventsCompleted: number) {
+    // Milestone values: 1, 5, 10, 25, 50, 100 events
+    const milestones = [1, 5, 10, 25, 50, 100];
+
+    if (milestones.includes(eventsCompleted)) {
+      const user = await this.db.query.users.findFirst({
+        where: eq(users.id, userId),
+      });
+
+      if (user) {
+        let title = '';
+        let description = '';
+
+        if (eventsCompleted === 1) {
+          title = 'First Event Completed';
+          description = "You've completed your first event! This is just the beginning of your journey.";
+        } else {
+          title = `${eventsCompleted} Events Milestone`;
+          description = `You've successfully completed ${eventsCompleted} events! You're building an amazing network.`;
+        }
+
+        await this.emailService.sendStatsCompletionEmail(
+          user.email,
+          user.firstName || 'there',
+          {
+            type: 'events',
+            value: eventsCompleted,
+            title,
+            description,
+          }
+        );
+      }
+    }
+  }
+
+  private async checkAndNotifyPointsMilestone(userId: string, totalPoints: number) {
+    // Milestone values: 100, 500, 1000, 2500, 5000, 10000 points
+    const milestones = [100, 500, 1000, 2500, 5000, 10000];
+
+    if (milestones.includes(totalPoints)) {
+      const user = await this.db.query.users.findFirst({
+        where: eq(users.id, userId),
+      });
+
+      if (user) {
+        await this.emailService.sendStatsCompletionEmail(
+          user.email,
+          user.firstName || 'there',
+          {
+            type: 'points',
+            value: totalPoints,
+            title: `${totalPoints} Points Milestone`,
+            description: `You've earned ${totalPoints} points! Your contributions to the community are outstanding.`,
+          }
+        );
+      }
     }
   }
 }

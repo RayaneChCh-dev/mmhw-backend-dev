@@ -19,6 +19,7 @@ import {
   UpdateInterestsDto,
   CompleteProfileDto,
   UpdateLocationDto,
+  UpdatePushTokenDto,
   UserResponseDto,
 } from './dto/user.dto';
 
@@ -126,5 +127,19 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Interests retrieved' })
   async getAvailableInterests() {
     return this.usersService.getAvailableInterests();
+  }
+
+  @Patch('push-token')
+  @ApiOperation({ summary: 'Update push notification token' })
+  @ApiResponse({ status: 200, description: 'Push token updated' })
+  async updatePushToken(@Request() req, @Body() updatePushTokenDto: UpdatePushTokenDto) {
+    return this.usersService.updatePushToken(req.user.userId, updatePushTokenDto);
+  }
+
+  @Delete('push-token')
+  @ApiOperation({ summary: 'Remove push notification token (logout)' })
+  @ApiResponse({ status: 200, description: 'Push token removed' })
+  async removePushToken(@Request() req) {
+    return this.usersService.removePushToken(req.user.userId);
   }
 }

@@ -29,6 +29,7 @@ import {
   SubmitEventFeedbackDto,
   GetNearbyEventsDto,
   GetEventsAtHubDto,
+  GetPendingRequestsDto,
   ReportUserDto,
   BlockUserDto,
 } from './dto/event.dto';
@@ -126,6 +127,20 @@ export class EventsController {
     @Body() dto: CreateEventRequestDto,
   ) {
     return this.eventsService.requestToJoinEvent(req.user.userId, dto);
+  }
+
+  // ============================================
+  // GET PENDING REQUESTS
+  // ============================================
+
+  @Get('requests/pending')
+  @ApiOperation({ summary: 'Get all pending join requests for your events' })
+  @ApiResponse({ status: 200, description: 'Returns list of pending requests with requester details' })
+  async getPendingRequests(
+    @Request() req,
+    @Query() dto: GetPendingRequestsDto,
+  ) {
+    return this.eventsService.getPendingRequests(req.user.userId, dto);
   }
 
   // ============================================
