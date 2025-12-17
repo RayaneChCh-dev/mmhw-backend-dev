@@ -39,6 +39,20 @@ export const users = pgTable('users', {
   country: varchar('country', { length: 2 }), // ISO country code
   avatar: text('avatar'), // URL or emoji ID
   avatarType: varchar('avatar_type', { length: 10 }), // 'emoji' | 'upload'
+  pushToken: varchar('push_token', { length: 255 }), // Expo push notification token
+  notificationPreferences: json('notification_preferences').$type<{
+    pushEnabled: boolean;
+    eventRequests: boolean;
+    eventAccepted: boolean;
+    newMessages: boolean;
+    eventCancelled: boolean;
+  }>().default({
+    pushEnabled: true,
+    eventRequests: true,
+    eventAccepted: true,
+    newMessages: true,
+    eventCancelled: true,
+  }),
   role: userRoleEnum('role').default('user'),
   isActive: boolean('is_active').default(true),
   isMfaEnabled: boolean('is_mfa_enabled').default(false),

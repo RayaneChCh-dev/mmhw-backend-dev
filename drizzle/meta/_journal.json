@@ -22,6 +22,27 @@
       "when": 1763828994877,
       "tag": "0002_sleepy_marrow",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1764534715100,
+      "tag": "0003_quick_squadron_sinister",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1765986443678,
+      "tag": "0004_funny_zodiak",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1765986600000,
+      "tag": "0005_fix_notification_preferences",
+      "breakpoints": true
     }
   ]
 }

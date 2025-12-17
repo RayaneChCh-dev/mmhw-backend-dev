@@ -41,21 +41,30 @@ export class UpdateProfileDto {
 }
 
 export class UpdateSkillsDto {
-  @ApiProperty({ example: ['web-dev', 'design', 'marketing'] })
+  @ApiProperty({
+    example: ['239c1e04-8a5e-4c3b-9f1e-2d3c4b5a6e7f', '7ecffb3c-9d2e-4f5a-8b6c-1e2d3c4b5a6e'],
+    description: 'Array of skill UUIDs to associate with the user'
+  })
   @IsArray()
   @IsString({ each: true })
   skills: string[];
 }
 
 export class UpdateAttitudesDto {
-  @ApiProperty({ example: ['cool', 'chill', 'networking'] })
+  @ApiProperty({
+    example: ['5a6b7c8d-9e0f-4a1b-2c3d-4e5f6a7b8c9d', '1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d'],
+    description: 'Array of attitude UUIDs to associate with the user'
+  })
   @IsArray()
   @IsString({ each: true })
   attitudes: string[];
 }
 
 export class UpdateInterestsDto {
-  @ApiProperty({ example: ['tech', 'travel', 'fitness'] })
+  @ApiProperty({
+    example: ['9a8b7c6d-5e4f-3a2b-1c0d-9e8f7a6b5c4d', '3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f'],
+    description: 'Array of interest UUIDs to associate with the user'
+  })
   @IsArray()
   @IsString({ each: true })
   interests: string[];
@@ -97,19 +106,28 @@ export class CompleteProfileDto {
   @IsEnum(['emoji', 'upload'])
   avatarType?: 'emoji' | 'upload';
 
-  @ApiPropertyOptional({ example: ['web-dev', 'design'] })
+  @ApiPropertyOptional({
+    example: ['239c1e04-8a5e-4c3b-9f1e-2d3c4b5a6e7f'],
+    description: 'Array of skill UUIDs'
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   skills?: string[];
 
-  @ApiPropertyOptional({ example: ['cool', 'networking'] })
+  @ApiPropertyOptional({
+    example: ['5a6b7c8d-9e0f-4a1b-2c3d-4e5f6a7b8c9d'],
+    description: 'Array of attitude UUIDs'
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   attitudes?: string[];
 
-  @ApiPropertyOptional({ example: ['tech', 'travel'] })
+  @ApiPropertyOptional({
+    example: ['9a8b7c6d-5e4f-3a2b-1c0d-9e8f7a6b5c4d'],
+    description: 'Array of interest UUIDs'
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -190,4 +208,13 @@ export class UpdateLocationDto {
   @IsOptional()
   @IsString()
   longitude?: string;
+}
+
+export class UpdatePushTokenDto {
+  @ApiProperty({
+    example: 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]',
+    description: 'Expo push notification token'
+  })
+  @IsString()
+  pushToken: string;
 }

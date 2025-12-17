@@ -189,3 +189,10 @@ export class GetEventsAtHubDto {
   @IsEnum(EventActivity)
   activityType?: EventActivity;
 }
+
+export class GetPendingRequestsDto {
+  @ApiPropertyOptional({ description: 'Filter by specific event ID' })
+  @IsOptional()
+  @IsUUID()
+  eventId?: string;
+}

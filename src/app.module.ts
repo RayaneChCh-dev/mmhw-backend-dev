@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './user/user.module';
 import { EventsModule } from './event/event.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { EventsModule } from './event/event.module';
     AuthModule,
     UsersModule,
     EventsModule,
+    NotificationsModule,
   ],
   controllers: [],
   providers: [],
