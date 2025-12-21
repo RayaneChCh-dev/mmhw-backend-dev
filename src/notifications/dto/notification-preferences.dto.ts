@@ -1,46 +1,21 @@
 import { IsBoolean, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
+/**
+ * DTO for updating notification preferences
+ * Simplified to use only pushEnabled as master toggle for all notifications
+ * When pushEnabled is true: all notification types are enabled
+ * When pushEnabled is false: all notification types are disabled
+ */
 export class NotificationPreferencesDto {
   @ApiProperty({
-    description: 'Enable/disable all push notifications',
+    description: 'Master toggle for all push notifications (events, messages, cancellations)',
     example: true,
+    required: false,
   })
-  @IsBoolean()
+  @IsBoolean({ message: 'pushEnabled must be a boolean value' })
   @IsOptional()
   pushEnabled?: boolean;
-
-  @ApiProperty({
-    description: 'Receive notifications when someone requests to join your event',
-    example: true,
-  })
-  @IsBoolean()
-  @IsOptional()
-  eventRequests?: boolean;
-
-  @ApiProperty({
-    description: 'Receive notifications when your event request is accepted',
-    example: true,
-  })
-  @IsBoolean()
-  @IsOptional()
-  eventAccepted?: boolean;
-
-  @ApiProperty({
-    description: 'Receive notifications for new chat messages',
-    example: true,
-  })
-  @IsBoolean()
-  @IsOptional()
-  newMessages?: boolean;
-
-  @ApiProperty({
-    description: 'Receive notifications when an event is cancelled',
-    example: true,
-  })
-  @IsBoolean()
-  @IsOptional()
-  eventCancelled?: boolean;
 }
 
 export class NotificationPreferencesResponseDto {
@@ -48,17 +23,7 @@ export class NotificationPreferencesResponseDto {
     description: 'Current notification preferences',
     example: {
       pushEnabled: true,
-      eventRequests: true,
-      eventAccepted: true,
-      newMessages: true,
-      eventCancelled: true,
     },
   })
-  preferences: {
-    pushEnabled: boolean;
-    eventRequests: boolean;
-    eventAccepted: boolean;
-    newMessages: boolean;
-    eventCancelled: boolean;
-  };
+  pushEnabled: boolean;
 }

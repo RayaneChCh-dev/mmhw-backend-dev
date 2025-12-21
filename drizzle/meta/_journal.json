@@ -40,8 +40,22 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1765986600000,
-      "tag": "0005_fix_notification_preferences",
+      "when": 1766158790146,
+      "tag": "0005_third_ken_ellis",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1734825600000,
+      "tag": "0006_fix_notification_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1734826200000,
+      "tag": "0007_simplify_notification_preferences",
       "breakpoints": true
     }
   ]

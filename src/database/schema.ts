@@ -330,6 +330,33 @@ export const eventFeedback = pgTable('event_feedback', {
   uniqueFeedback: uniqueIndex('unique_event_feedback').on(table.eventId, table.fromUserId),
 }));
 
+// User Devices (for push notification token management)
+export const userDevices = pgTable('user_devices', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+
+  // Device identification
+  deviceId: varchar('device_id', { length: 255 }).notNull(), // Unique device identifier from frontend
+  deviceType: varchar('device_type', { length: 50 }), // 'ios', 'android', 'web'
+  deviceName: varchar('device_name', { length: 255 }), // Device model/name
+
+  // Push token
+  pushToken: varchar('push_token', { length: 255 }).notNull().unique(), // Expo push token (must be unique)
+
+  // Timestamps
+  lastUsedAt: timestamp('last_used_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  // Ensure one device per user (user can't register same device twice)
+  uniqueUserDevice: uniqueIndex('unique_user_device').on(table.userId, table.deviceId),
+  // Ensure push token is unique across all devices
+  uniquePushToken: uniqueIndex('unique_push_token').on(table.pushToken),
+  userIdx: index('idx_user_devices_user').on(table.userId),
+}));
+
 // Blocked Users
 export const blockedUsers = pgTable('blocked_users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -383,6 +410,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   refreshTokens: many(refreshTokens),
   sessions: many(sessions),
   locations: many(userLocations),
+  devices: many(userDevices),
   createdEvents: many(events, { relationName: 'creator' }),
   joinedEvents: many(events, { relationName: 'participant' }),
   eventRequests: many(eventRequests),
@@ -397,6 +425,13 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   conversationsAsUser1: many(conversations, { relationName: 'conversationsAsUser1' }),
   conversationsAsUser2: many(conversations, { relationName: 'conversationsAsUser2' }),
   sentEventMessages: many(messages),
+}));
+
+export const userDevicesRelations = relations(userDevices, ({ one }) => ({
+  user: one(users, {
+    fields: [userDevices.userId],
+    references: [users.id],
+  }),
 }));
 
 export const skillsRelations = relations(skills, ({ many }) => ({

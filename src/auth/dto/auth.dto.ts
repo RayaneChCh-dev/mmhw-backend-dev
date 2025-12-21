@@ -115,7 +115,10 @@ export class EnableMfaDto {
 }
 
 export class VerifyMfaDto {
-  @ApiProperty({ example: '123456' })
+  @ApiProperty({
+    example: '123456',
+    description: '6-digit TOTP code from authenticator app'
+  })
   @IsString()
   @MinLength(6)
   @MaxLength(6)

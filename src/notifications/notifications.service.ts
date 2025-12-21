@@ -1,8 +1,8 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { Expo, ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 import { DATABASE_CONNECTION } from '../database/database.module';
-import { users } from '../database/schema';
-import { eq } from 'drizzle-orm';
+import { users, userDevices } from '../database/schema';
+import { eq, ne } from 'drizzle-orm';
 
 /**
  * NotificationsService handles push notifications via Expo
@@ -44,7 +44,8 @@ export class NotificationsService {
         requesterName: requester?.firstName,
       };
 
-      await this.sendPushNotification(creatorId, title, body, data);
+      // CRITICAL: Pass requesterId as senderId to prevent requester from receiving notification
+      await this.sendPushNotification(creatorId, title, body, data, requesterId);
     } catch (error) {
       this.logger.error(`Failed to send event request notification: ${error.message}`);
     }
@@ -77,7 +78,8 @@ export class NotificationsService {
         creatorName: creator?.firstName,
       };
 
-      await this.sendPushNotification(participantId, title, body, data);
+      // CRITICAL: Pass creatorId as senderId to prevent creator from receiving notification
+      await this.sendPushNotification(participantId, title, body, data, creatorId);
     } catch (error) {
       this.logger.error(`Failed to send event accepted notification: ${error.message}`);
     }
@@ -114,7 +116,8 @@ export class NotificationsService {
         senderName: sender?.firstName,
       };
 
-      await this.sendPushNotification(recipientId, title, body, data);
+      // CRITICAL: Pass senderId to prevent sender from receiving their own message notification
+      await this.sendPushNotification(recipientId, title, body, data, senderId);
     } catch (error) {
       this.logger.error(`Failed to send new message notification: ${error.message}`);
     }
@@ -124,8 +127,9 @@ export class NotificationsService {
    * Send notification when event is cancelled
    * @param participantId - Participant to notify
    * @param event - Event details
+   * @param creatorId - Optional creator ID (sender) to exclude from notifications
    */
-  async sendEventCancelled(participantId: string, event: any) {
+  async sendEventCancelled(participantId: string, event: any, creatorId?: string) {
     try {
       const title = '❌ Event Cancelled';
       const body = `The ${event.activityType} at ${event.hubName} has been cancelled by the creator`;
@@ -134,10 +138,52 @@ export class NotificationsService {
         eventId: event.id,
       };
 
-      await this.sendPushNotification(participantId, title, body, data);
+      // CRITICAL: Pass creatorId as senderId to prevent creator from receiving notification
+      await this.sendPushNotification(participantId, title, body, data, creatorId);
     } catch (error) {
       this.logger.error(`Failed to send event cancelled notification: ${error.message}`);
     }
+  }
+
+  /**
+   * Get all valid push tokens for a user (from all their devices)
+   * Excludes the sender if senderId is provided
+   * @param userId - User ID to get tokens for
+   * @param senderId - Optional sender ID to exclude (CRITICAL for preventing self-notifications)
+   */
+  private async getUserPushTokens(userId: string, senderId?: string): Promise<string[]> {
+    // CRITICAL: If userId is the same as senderId, return empty array
+    // This prevents users from receiving notifications about their own actions
+    if (senderId && userId === senderId) {
+      this.logger.debug(`Excluding sender ${senderId} from receiving their own notification`);
+      return [];
+    }
+
+    const tokens: string[] = [];
+
+    // Get tokens from user_devices table (new approach)
+    const devices = await this.db.query.userDevices.findMany({
+      where: eq(userDevices.userId, userId),
+      columns: {
+        pushToken: true,
+      },
+    });
+
+    tokens.push(...devices.map(d => d.pushToken));
+
+    // Get legacy push token from users table (for backward compatibility)
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: {
+        pushToken: true,
+      },
+    });
+
+    if (user?.pushToken && !tokens.includes(user.pushToken)) {
+      tokens.push(user.pushToken);
+    }
+
+    return tokens.filter(token => token && Expo.isExpoPushToken(token));
   }
 
   /**
@@ -146,80 +192,64 @@ export class NotificationsService {
    * @param title - Notification title
    * @param body - Notification body
    * @param data - Additional data payload
+   * @param senderId - Optional sender ID to exclude from recipients (CRITICAL!)
    */
   private async sendPushNotification(
     userId: string,
     title: string,
     body: string,
     data: Record<string, any>,
+    senderId?: string,
   ) {
     try {
-      // Get user's push token and notification preferences
+      // CRITICAL: Check if userId is the sender - if so, DON'T send notification
+      if (senderId && userId === senderId) {
+        this.logger.debug(`Skipping notification for sender ${senderId}`);
+        return;
+      }
+
+      // Get user's notification preferences
       const user = await this.db.query.users.findFirst({
         where: eq(users.id, userId),
         columns: {
-          pushToken: true,
           notificationPreferences: true,
         },
       });
 
-      if (!user?.pushToken) {
-        this.logger.debug(`No push token found for user ${userId}`);
+      if (!user) {
+        this.logger.debug(`User ${userId} not found`);
         return;
       }
 
       // Check if push notifications are enabled globally
-      const preferences = user.notificationPreferences || {
-        pushEnabled: true,
-        eventRequests: true,
-        eventAccepted: true,
-        newMessages: true,
-        eventCancelled: true,
-      };
+      const preferences = user.notificationPreferences || { pushEnabled: true };
 
       if (!preferences.pushEnabled) {
         this.logger.debug(`Push notifications disabled for user ${userId}`);
         return;
       }
 
-      // Check specific notification type preferences
-      const notificationType = data.type;
-      if (notificationType === 'event_request' && !preferences.eventRequests) {
-        this.logger.debug(`Event request notifications disabled for user ${userId}`);
-        return;
-      }
-      if (notificationType === 'request_accepted' && !preferences.eventAccepted) {
-        this.logger.debug(`Request accepted notifications disabled for user ${userId}`);
-        return;
-      }
-      if (notificationType === 'new_message' && !preferences.newMessages) {
-        this.logger.debug(`New message notifications disabled for user ${userId}`);
-        return;
-      }
-      if (notificationType === 'event_cancelled' && !preferences.eventCancelled) {
-        this.logger.debug(`Event cancelled notifications disabled for user ${userId}`);
+      // Get all valid push tokens for this user (excluding sender)
+      const pushTokens = await this.getUserPushTokens(userId, senderId);
+
+      if (pushTokens.length === 0) {
+        this.logger.debug(`No push tokens found for user ${userId}`);
         return;
       }
 
-      // Validate push token
-      if (!Expo.isExpoPushToken(user.pushToken)) {
-        this.logger.warn(`Invalid push token for user ${userId}: ${user.pushToken}`);
-        return;
-      }
-
-      // Create message
-      const message: ExpoPushMessage = {
-        to: user.pushToken,
+      // Create messages for all devices
+      const messages: ExpoPushMessage[] = pushTokens.map(token => ({
+        to: token,
         sound: 'default',
         title,
         body,
         data,
         priority: 'high',
         channelId: 'default', // For Android
-      };
+      }));
 
-      // Send notification
-      const chunks = this.expo.chunkPushNotifications([message]);
+      // Send notifications
+      const chunks = this.expo.chunkPushNotifications(messages);
       const tickets: ExpoPushTicket[] = [];
 
       for (const chunk of chunks) {
@@ -231,25 +261,35 @@ export class NotificationsService {
         }
       }
 
-      // Check for errors in tickets
-      for (const ticket of tickets) {
+      // Check for errors in tickets and clean up invalid tokens
+      for (let i = 0; i < tickets.length; i++) {
+        const ticket = tickets[i];
+        const token = pushTokens[i];
+
         if (ticket.status === 'error') {
           this.logger.error(
-            `Push notification error: ${ticket.message} (${ticket.details?.error})`,
+            `Push notification error for token ${token}: ${ticket.message} (${ticket.details?.error})`,
           );
 
-          // If token is invalid, clear it from database
+          // If token is invalid, remove it from database
           if (ticket.details?.error === 'DeviceNotRegistered') {
+            // Remove from user_devices table
+            await this.db
+              .delete(userDevices)
+              .where(eq(userDevices.pushToken, token));
+
+            // Also clear from users table if it matches
             await this.db
               .update(users)
               .set({ pushToken: null })
-              .where(eq(users.id, userId));
-            this.logger.debug(`Cleared invalid push token for user ${userId}`);
+              .where(eq(users.pushToken, token));
+
+            this.logger.debug(`Removed invalid push token: ${token}`);
           }
         }
       }
 
-      this.logger.debug(`Push notification sent to user ${userId}: ${title}`);
+      this.logger.debug(`Push notification sent to user ${userId} (${pushTokens.length} devices): ${title}`);
     } catch (error) {
       this.logger.error(`Failed to send push notification: ${error.message}`);
       throw error;
@@ -302,6 +342,7 @@ export class NotificationsService {
 
   /**
    * Get user's notification preferences
+   * Simplified to return only pushEnabled (master toggle for all notifications)
    * @param userId - User ID
    */
   async getNotificationPreferences(userId: string) {
@@ -317,21 +358,14 @@ export class NotificationsService {
         throw new Error('User not found');
       }
 
-      // Default preferences
+      // Default preference: pushEnabled = true
       const defaultPreferences = {
         pushEnabled: true,
-        eventRequests: true,
-        eventAccepted: true,
-        newMessages: true,
-        eventCancelled: true,
       };
 
-      // Merge with user preferences to ensure all fields are present
+      // Return pushEnabled from user preferences or default
       return {
-        preferences: {
-          ...defaultPreferences,
-          ...(user.notificationPreferences || {}),
-        },
+        pushEnabled: user.notificationPreferences?.pushEnabled ?? defaultPreferences.pushEnabled,
       };
     } catch (error) {
       this.logger.error(`Failed to get notification preferences: ${error.message}`);
@@ -341,27 +375,28 @@ export class NotificationsService {
 
   /**
    * Update user's notification preferences
+   * Simplified to only update pushEnabled (master toggle for all notifications)
    * @param userId - User ID
-   * @param preferences - New preferences
+   * @param preferences - Object containing pushEnabled boolean
    */
   async updateNotificationPreferences(
     userId: string,
-    preferences: Partial<{
-      pushEnabled: boolean;
-      eventRequests: boolean;
-      eventAccepted: boolean;
-      newMessages: boolean;
-      eventCancelled: boolean;
-    }>,
+    preferences: { pushEnabled?: boolean },
   ) {
     try {
-      // Get current preferences
-      const currentPrefs = await this.getNotificationPreferences(userId);
+      // Validate that pushEnabled field is provided
+      if (preferences.pushEnabled === undefined) {
+        throw new Error('pushEnabled field must be provided');
+      }
 
-      // Merge with new preferences
+      // Log the update request for debugging
+      this.logger.debug(
+        `Updating notification preferences for user ${userId}: ${JSON.stringify(preferences)}`
+      );
+
+      // Simple update - just set pushEnabled
       const updatedPreferences = {
-        ...currentPrefs.preferences,
-        ...preferences,
+        pushEnabled: preferences.pushEnabled,
       };
 
       // Update in database
@@ -370,7 +405,10 @@ export class NotificationsService {
         .set({ notificationPreferences: updatedPreferences })
         .where(eq(users.id, userId));
 
-      this.logger.debug(`Notification preferences updated for user ${userId}`);
+      this.logger.debug(
+        `Notification preferences successfully updated for user ${userId}: ${JSON.stringify(updatedPreferences)}`
+      );
+
       return {
         message: 'Notification preferences updated successfully',
         preferences: updatedPreferences,

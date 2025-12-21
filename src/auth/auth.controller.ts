@@ -6,6 +6,8 @@ import {
   HttpStatus,
   UseGuards,
   Request,
+  Headers,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -128,12 +130,25 @@ export class AuthController {
 
   @Post('mfa/verify')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify MFA code during login' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Verify MFA code during login',
+    description: 'Send the temporary MFA token in the Authorization header as "Bearer <mfaToken>"'
+  })
   @ApiResponse({ status: 200, description: 'MFA verified', type: AuthResponseDto })
+  @ApiResponse({ status: 401, description: 'Invalid or expired MFA token' })
+  @ApiResponse({ status: 400, description: 'Invalid verification code' })
   async verifyMfa(
+    @Headers('authorization') authorization: string,
     @Body() verifyMfaDto: VerifyMfaDto,
-    @Body('mfaToken') mfaToken: string,
   ): Promise<AuthResponseDto> {
+    // Extract token from Authorization header
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      throw new UnauthorizedException('MFA token must be provided in Authorization header');
+    }
+
+    const mfaToken = authorization.substring(7); // Remove 'Bearer ' prefix
+
     return this.authService.verifyMfaLogin(mfaToken, verifyMfaDto.code);
   }
 }

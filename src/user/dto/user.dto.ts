@@ -217,4 +217,28 @@ export class UpdatePushTokenDto {
   })
   @IsString()
   pushToken: string;
+
+  @ApiPropertyOptional({
+    example: 'uuid-or-device-specific-id',
+    description: 'Unique device identifier'
+  })
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
+
+  @ApiPropertyOptional({
+    example: 'ios',
+    description: 'Device type (ios, android, web)'
+  })
+  @IsOptional()
+  @IsString()
+  deviceType?: string;
+
+  @ApiPropertyOptional({
+    example: 'iPhone 14 Pro',
+    description: 'Device name or model'
+  })
+  @IsOptional()
+  @IsString()
+  deviceName?: string;
 }

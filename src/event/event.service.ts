@@ -611,7 +611,7 @@ export class EventsService {
 
     // Send push notification and WebSocket event to participant if matched
     if (event.participantId) {
-      await this.notificationsService.sendEventCancelled(event.participantId, event);
+      await this.notificationsService.sendEventCancelled(event.participantId, event, userId);
       this.notificationsGateway.emitEventCancelled(event.participantId, {
         eventId: event.id,
         event,

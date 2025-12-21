@@ -3,8 +3,9 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, ne } from 'drizzle-orm';
 import { DATABASE_CONNECTION } from '../database/database.module';
 import {
   users,
@@ -15,6 +16,7 @@ import {
   interests,
   userInterests,
   userLocations,
+  userDevices,
 } from '../database/schema';
 import {
   UpdateProfileDto,
@@ -29,6 +31,8 @@ import {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(@Inject(DATABASE_CONNECTION) private db: any) {}
 
   async getProfile(userId: string): Promise<UserResponseDto> {
@@ -313,20 +317,85 @@ export class UsersService {
     userId: string,
     updatePushTokenDto: UpdatePushTokenDto,
   ): Promise<{ message: string }> {
-    await this.db
-      .update(users)
-      .set({ pushToken: updatePushTokenDto.pushToken })
-      .where(eq(users.id, userId));
+    const { pushToken, deviceId, deviceType, deviceName } = updatePushTokenDto;
 
-    return { message: 'Push token updated successfully' };
+    try {
+      // CRITICAL: Remove this token from ANY other users/devices that might have it
+      // This ensures token uniqueness across the entire system
+      await this.db
+        .delete(userDevices)
+        .where(eq(userDevices.pushToken, pushToken));
+
+      this.logger.debug(`Removed push token ${pushToken} from any previous devices`);
+
+      // If device information is provided, use the new device-based approach
+      if (deviceId) {
+        // Check if this user already has a device with this deviceId
+        const existingDevice = await this.db.query.userDevices.findFirst({
+          where: and(
+            eq(userDevices.userId, userId),
+            eq(userDevices.deviceId, deviceId)
+          ),
+        });
+
+        if (existingDevice) {
+          // Update existing device with new token
+          await this.db
+            .update(userDevices)
+            .set({
+              pushToken,
+              deviceType,
+              deviceName,
+              lastUsedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(userDevices.id, existingDevice.id));
+
+          this.logger.debug(`Updated push token for user ${userId} device ${deviceId}`);
+        } else {
+          // Create new device entry
+          await this.db.insert(userDevices).values({
+            userId,
+            deviceId,
+            deviceType,
+            deviceName,
+            pushToken,
+            lastUsedAt: new Date(),
+          });
+
+          this.logger.debug(`Created new device entry for user ${userId} device ${deviceId}`);
+        }
+      } else {
+        // Legacy approach: update the user's pushToken field directly
+        // This maintains backward compatibility with old clients
+        await this.db
+          .update(users)
+          .set({ pushToken })
+          .where(eq(users.id, userId));
+
+        this.logger.debug(`Updated legacy push token for user ${userId}`);
+      }
+
+      return { message: 'Push token updated successfully' };
+    } catch (error) {
+      this.logger.error(`Failed to update push token: ${error.message}`);
+      throw new BadRequestException('Failed to update push token');
+    }
   }
 
   async removePushToken(userId: string): Promise<{ message: string }> {
+    // Remove all devices for this user
+    await this.db
+      .delete(userDevices)
+      .where(eq(userDevices.userId, userId));
+
+    // Also clear legacy pushToken field
     await this.db
       .update(users)
       .set({ pushToken: null })
       .where(eq(users.id, userId));
 
+    this.logger.debug(`Removed all push tokens for user ${userId}`);
     return { message: 'Push token removed successfully' };
   }
 }

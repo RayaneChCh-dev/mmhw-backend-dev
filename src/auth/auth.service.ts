@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -24,6 +25,8 @@ import {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @Inject(DATABASE_CONNECTION) private db: any,
     private jwtService: JwtService,
@@ -397,35 +400,89 @@ export class AuthService {
   }
 
   async verifyMfaLogin(mfaToken: string, code: string): Promise<AuthResponseDto> {
+    // START: MFA Verification Debug Logging
+    const requestTimestamp = new Date().toISOString();
+    this.logger.debug(`[MFA VERIFY] === START REQUEST at ${requestTimestamp} ===`);
+    this.logger.debug(`[MFA VERIFY] Received token: ${mfaToken ? mfaToken.substring(0, 20) + '...' : 'null'}`);
+    this.logger.debug(`[MFA VERIFY] Received code: ${code ? code.length + ' digits' : 'null'}`);
+
     let payload: any;
     try {
+      this.logger.debug(`[MFA VERIFY] Attempting to verify JWT token...`);
       payload = this.jwtService.verify(mfaToken);
-    } catch {
+
+      // Log successful verification with timing details
+      const now = Math.floor(Date.now() / 1000);
+      const issuedAt = payload.iat ? new Date(payload.iat * 1000).toISOString() : 'unknown';
+      const expiresAt = payload.exp ? new Date(payload.exp * 1000).toISOString() : 'unknown';
+      const secondsUntilExpiry = payload.exp ? payload.exp - now : 'unknown';
+
+      this.logger.debug(`[MFA VERIFY] ✅ JWT verification successful`);
+      this.logger.debug(`[MFA VERIFY] Token payload: ${JSON.stringify({ userId: payload.userId, type: payload.type, iat: issuedAt, exp: expiresAt })}`);
+      this.logger.debug(`[MFA VERIFY] Time until expiry: ${secondsUntilExpiry} seconds`);
+    } catch (error) {
+      // Detailed error logging
+      const errorTimestamp = new Date().toISOString();
+      this.logger.error(`[MFA VERIFY] ❌ JWT verification failed at ${errorTimestamp}`);
+      this.logger.error(`[MFA VERIFY] Error name: ${error.name}`);
+      this.logger.error(`[MFA VERIFY] Error message: ${error.message}`);
+
+      if (error.name === 'TokenExpiredError') {
+        const expiredAt = error.expiredAt ? new Date(error.expiredAt).toISOString() : 'unknown';
+        this.logger.error(`[MFA VERIFY] Token expired at: ${expiredAt}`);
+        this.logger.error(`[MFA VERIFY] Current time: ${errorTimestamp}`);
+      } else if (error.name === 'JsonWebTokenError') {
+        this.logger.error(`[MFA VERIFY] JWT validation error: ${error.message}`);
+      }
+
       throw new UnauthorizedException('Invalid or expired MFA token');
     }
 
+    // Verify token type
+    this.logger.debug(`[MFA VERIFY] Checking token type: ${payload.type}`);
     if (payload.type !== 'mfa') {
+      this.logger.error(`[MFA VERIFY] ❌ Invalid token type: expected 'mfa', got '${payload.type}'`);
       throw new UnauthorizedException('Invalid token type');
     }
 
+    // Fetch user
+    this.logger.debug(`[MFA VERIFY] Fetching user with ID: ${payload.userId}`);
     const user = await this.db.query.users.findFirst({
       where: eq(users.id, payload.userId),
     });
 
     if (!user || !user.mfaSecret) {
+      this.logger.error(`[MFA VERIFY] ❌ User validation failed for ID ${payload.userId}`);
+      this.logger.error(`[MFA VERIFY] User exists: ${!!user}`);
+      this.logger.error(`[MFA VERIFY] MFA secret exists: ${!!user?.mfaSecret}`);
       throw new UnauthorizedException('Invalid user');
     }
 
+    this.logger.debug(`[MFA VERIFY] ✅ User found and MFA secret exists`);
+    this.logger.debug(`[MFA VERIFY] Verifying TOTP code...`);
+
+    // Verify TOTP code
     const isValid = authenticator.verify({
       token: code,
       secret: user.mfaSecret,
     });
 
     if (!isValid) {
+      this.logger.error(`[MFA VERIFY] ❌ Invalid TOTP code provided`);
+      this.logger.error(`[MFA VERIFY] Code length: ${code.length}`);
       throw new BadRequestException('Invalid verification code');
     }
 
-    return this.generateTokens(user);
+    this.logger.debug(`[MFA VERIFY] ✅ TOTP code verification successful`);
+    this.logger.debug(`[MFA VERIFY] Generating auth tokens for user ${user.id}...`);
+
+    // Generate final access and refresh tokens
+    const authResponse = await this.generateTokens(user);
+
+    this.logger.debug(`[MFA VERIFY] ✅ Auth tokens generated successfully`);
+    this.logger.debug(`[MFA VERIFY] === END REQUEST at ${new Date().toISOString()} ===`);
+
+    return authResponse;
   }
 
   async refreshToken(token: string): Promise<AuthResponseDto> {
