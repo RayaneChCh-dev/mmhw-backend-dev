@@ -17,6 +17,8 @@ import {
   UpdateSkillsDto,
   UpdateAttitudesDto,
   UpdateInterestsDto,
+  UpdateLanguagesDto,
+  UpdateCountriesDto,
   CompleteProfileDto,
   UpdateLocationDto,
   UpdatePushTokenDto,
@@ -86,6 +88,20 @@ export class UsersController {
     return this.usersService.updateInterests(req.user.userId, updateInterestsDto);
   }
 
+  @Patch('languages')
+  @ApiOperation({ summary: 'Update user languages' })
+  @ApiResponse({ status: 200, description: 'Languages updated' })
+  async updateLanguages(@Request() req, @Body() updateLanguagesDto: UpdateLanguagesDto) {
+    return this.usersService.updateLanguages(req.user.userId, updateLanguagesDto);
+  }
+
+  @Patch('countries')
+  @ApiOperation({ summary: 'Update user countries' })
+  @ApiResponse({ status: 200, description: 'Countries updated' })
+  async updateCountries(@Request() req, @Body() updateCountriesDto: UpdateCountriesDto) {
+    return this.usersService.updateCountries(req.user.userId, updateCountriesDto);
+  }
+
   @Post('location')
   @ApiOperation({ summary: 'Update current location' })
   @ApiResponse({ status: 200, description: 'Location updated' })
@@ -127,6 +143,20 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Interests retrieved' })
   async getAvailableInterests() {
     return this.usersService.getAvailableInterests();
+  }
+
+  @Get('options/languages')
+  @ApiOperation({ summary: 'Get available languages' })
+  @ApiResponse({ status: 200, description: 'Languages retrieved' })
+  async getAvailableLanguages() {
+    return this.usersService.getAvailableLanguages();
+  }
+
+  @Get('options/countries')
+  @ApiOperation({ summary: 'Get available countries' })
+  @ApiResponse({ status: 200, description: 'Countries retrieved' })
+  async getAvailableCountries() {
+    return this.usersService.getAvailableCountries();
   }
 
   @Patch('push-token')

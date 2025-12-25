@@ -15,6 +15,10 @@ import {
   userAttitudes,
   interests,
   userInterests,
+  languages,
+  userLanguages,
+  countries,
+  userCountries,
   userLocations,
   userDevices,
 } from '../database/schema';
@@ -23,6 +27,8 @@ import {
   UpdateSkillsDto,
   UpdateAttitudesDto,
   UpdateInterestsDto,
+  UpdateLanguagesDto,
+  UpdateCountriesDto,
   CompleteProfileDto,
   UpdateLocationDto,
   UpdatePushTokenDto,
@@ -52,6 +58,16 @@ export class UsersService {
         interests: {
           with: {
             interest: true,
+          },
+        },
+        languages: {
+          with: {
+            language: true,
+          },
+        },
+        countries: {
+          with: {
+            country: true,
           },
         },
       },
@@ -95,7 +111,7 @@ export class UsersService {
     userId: string,
     completeProfileDto: CompleteProfileDto,
   ): Promise<UserResponseDto> {
-    const { skills: skillIds, attitudes: attitudeIds, interests: interestIds, ...profileData } =
+    const { skills: skillIds, attitudes: attitudeIds, interests: interestIds, languages: languageIds, countries: countryIds, ...profileData } =
       completeProfileDto;
 
     // Update basic profile
@@ -121,6 +137,16 @@ export class UsersService {
     // Update interests if provided
     if (interestIds && interestIds.length > 0) {
       await this.updateUserInterests(userId, interestIds);
+    }
+
+    // Update languages if provided
+    if (languageIds && languageIds.length > 0) {
+      await this.updateUserLanguages(userId, languageIds);
+    }
+
+    // Update countries if provided
+    if (countryIds && countryIds.length > 0) {
+      await this.updateUserCountries(userId, countryIds);
     }
 
     return this.getProfile(userId);
@@ -165,6 +191,34 @@ export class UsersService {
     return {
       message: 'Interests updated successfully',
       interests: userProfile.interests || [],
+    };
+  }
+
+  async updateLanguages(
+    userId: string,
+    updateLanguagesDto: UpdateLanguagesDto,
+  ): Promise<{ message: string; languages: any[] }> {
+    await this.updateUserLanguages(userId, updateLanguagesDto.languages);
+
+    const userProfile = await this.getProfile(userId);
+
+    return {
+      message: 'Languages updated successfully',
+      languages: userProfile.languages || [],
+    };
+  }
+
+  async updateCountries(
+    userId: string,
+    updateCountriesDto: UpdateCountriesDto,
+  ): Promise<{ message: string; countries: any[] }> {
+    await this.updateUserCountries(userId, updateCountriesDto.countries);
+
+    const userProfile = await this.getProfile(userId);
+
+    return {
+      message: 'Countries updated successfully',
+      countries: userProfile.countries || [],
     };
   }
 
@@ -289,6 +343,62 @@ export class UsersService {
     );
   }
 
+  private async updateUserLanguages(userId: string, languageIds: string[]) {
+    // Delete existing languages
+    await this.db.delete(userLanguages).where(eq(userLanguages.userId, userId));
+
+    if (languageIds.length === 0) return;
+
+    // Validate that all language IDs exist
+    const existingLanguages = await this.db.query.languages.findMany({
+      where: inArray(languages.id, languageIds),
+    });
+
+    if (existingLanguages.length !== languageIds.length) {
+      const foundIds = existingLanguages.map(l => l.id);
+      const missingIds = languageIds.filter(id => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Invalid language IDs: ${missingIds.join(', ')}`
+      );
+    }
+
+    // Create user-language associations
+    await this.db.insert(userLanguages).values(
+      languageIds.map((languageId) => ({
+        userId,
+        languageId,
+      })),
+    );
+  }
+
+  private async updateUserCountries(userId: string, countryIds: string[]) {
+    // Delete existing countries
+    await this.db.delete(userCountries).where(eq(userCountries.userId, userId));
+
+    if (countryIds.length === 0) return;
+
+    // Validate that all country IDs exist
+    const existingCountries = await this.db.query.countries.findMany({
+      where: inArray(countries.id, countryIds),
+    });
+
+    if (existingCountries.length !== countryIds.length) {
+      const foundIds = existingCountries.map(c => c.id);
+      const missingIds = countryIds.filter(id => !foundIds.includes(id));
+      throw new BadRequestException(
+        `Invalid country IDs: ${missingIds.join(', ')}`
+      );
+    }
+
+    // Create user-country associations
+    await this.db.insert(userCountries).values(
+      countryIds.map((countryId) => ({
+        userId,
+        countryId,
+      })),
+    );
+  }
+
   private formatUserResponse(user: any): UserResponseDto {
     const { password, mfaSecret, ...userData } = user;
 
@@ -297,6 +407,8 @@ export class UsersService {
       skills: user.skills?.map((us: any) => us.skill) || [],
       attitudes: user.attitudes?.map((ua: any) => ua.attitude) || [],
       interests: user.interests?.map((ui: any) => ui.interest) || [],
+      languages: user.languages?.map((ul: any) => ul.language) || [],
+      countries: user.countries?.map((uc: any) => uc.country) || [],
     };
   }
 
@@ -311,6 +423,14 @@ export class UsersService {
 
   async getAvailableInterests() {
     return await this.db.query.interests.findMany();
+  }
+
+  async getAvailableLanguages() {
+    return await this.db.query.languages.findMany();
+  }
+
+  async getAvailableCountries() {
+    return await this.db.query.countries.findMany();
   }
 
   async updatePushToken(

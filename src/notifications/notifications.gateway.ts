@@ -219,6 +219,94 @@ export class NotificationsGateway
   }
 
   /**
+   * Emit revalidation request notification to creator
+   */
+  emitRevalidationRequest(creatorId: string, data: {
+    eventId: string;
+    event: any;
+  }) {
+    const socketId = this.userSockets.get(creatorId);
+
+    if (socketId) {
+      this.server.to(socketId).emit('revalidation_request', {
+        type: 'revalidation_request',
+        ...data,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.debug(`Emitted revalidation_request to user ${creatorId}`);
+    } else {
+      this.logger.debug(`User ${creatorId} not connected, skipping real-time notification`);
+    }
+  }
+
+  /**
+   * Emit user checked in notification
+   */
+  emitUserCheckedIn(recipientId: string, data: {
+    eventId: string;
+    userId: string;
+    userName?: string;
+  }) {
+    const socketId = this.userSockets.get(recipientId);
+
+    if (socketId) {
+      this.server.to(socketId).emit('user_checked_in', {
+        type: 'user_checked_in',
+        ...data,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.debug(`Emitted user_checked_in to user ${recipientId}`);
+    } else {
+      this.logger.debug(`User ${recipientId} not connected, skipping real-time notification`);
+    }
+  }
+
+  /**
+   * Emit both users checked in notification
+   */
+  emitBothCheckedIn(userId: string, data: {
+    eventId: string;
+  }) {
+    const socketId = this.userSockets.get(userId);
+
+    if (socketId) {
+      this.server.to(socketId).emit('both_checked_in', {
+        type: 'both_checked_in',
+        ...data,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.debug(`Emitted both_checked_in to user ${userId}`);
+    } else {
+      this.logger.debug(`User ${userId} not connected, skipping real-time notification`);
+    }
+  }
+
+  /**
+   * Emit feedback reminder notification
+   */
+  emitFeedbackReminder(userId: string, data: {
+    eventId: string;
+    event: any;
+  }) {
+    const socketId = this.userSockets.get(userId);
+
+    if (socketId) {
+      this.server.to(socketId).emit('feedback_reminder', {
+        type: 'feedback_reminder',
+        ...data,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.debug(`Emitted feedback_reminder to user ${userId}`);
+    } else {
+      this.logger.debug(`User ${userId} not connected, skipping real-time notification`);
+    }
+  }
+
+  /**
    * Get connection status for a user
    */
   isUserConnected(userId: string): boolean {

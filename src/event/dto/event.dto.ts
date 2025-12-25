@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsEnum, IsNumber, IsOptional, IsUUID, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsNumber, IsOptional, IsUUID, IsInt, Min, Max, IsDateString, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum EventActivity {
@@ -10,11 +10,23 @@ export enum EventActivity {
 }
 
 export enum EventStatus {
-  ACTIVE = 'active',
+  SCHEDULED = 'scheduled',
   MATCHED = 'matched',
+  REVALIDATION_PENDING = 'revalidation_pending',
+  ACTIVE = 'active',
+  ON_SITE_PARTIAL = 'on_site_partial',
+  ON_SITE_CONFIRMED = 'on_site_confirmed',
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
+  CANCELLED_NO_REVALIDATION = 'cancelled_no_revalidation',
+  CANCELLED_GEO_MISMATCH = 'cancelled_geo_mismatch',
   EXPIRED = 'expired',
+}
+
+export enum CheckInStatus {
+  PENDING = 'pending',
+  CHECKED_IN = 'checked_in',
+  NO_SHOW = 'no_show',
 }
 
 export enum EventRequestStatus {
@@ -62,6 +74,17 @@ export class CreateEventDto {
   @ApiProperty({ enum: EventActivity, description: 'Type of activity' })
   @IsEnum(EventActivity)
   activityType: EventActivity;
+
+  @ApiProperty({ description: 'Scheduled start time (ISO 8601 format)', example: '2026-06-14T14:00:00Z' })
+  @IsDateString()
+  @IsNotEmpty()
+  scheduledStartTime: string;
+
+  @ApiProperty({ description: 'Event duration in minutes', example: 120, minimum: 30, maximum: 480 })
+  @IsInt()
+  @Min(30)
+  @Max(480)
+  duration: number;
 }
 
 // ============================================
@@ -195,4 +218,29 @@ export class GetPendingRequestsDto {
   @IsOptional()
   @IsUUID()
   eventId?: string;
+}
+
+// ============================================
+// REVALIDATION
+// ============================================
+
+export class RevalidateEventDto {
+  @ApiProperty({ description: 'Confirm attendance (true) or cancel event (false)' })
+  @IsBoolean()
+  @IsNotEmpty()
+  confirmed: boolean;
+
+  @ApiProperty({ description: 'Current location', example: { lat: 48.8566, lng: 2.3522 } })
+  @IsNotEmpty()
+  location: { lat: number; lng: number };
+}
+
+// ============================================
+// CHECK-IN
+// ============================================
+
+export class CheckInEventDto {
+  @ApiProperty({ description: 'Current location', example: { lat: 48.8566, lng: 2.3522 } })
+  @IsNotEmpty()
+  location: { lat: number; lng: number };
 }

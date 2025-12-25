@@ -29,10 +29,17 @@ import {
   FeedbackRating,
   ReportUserDto,
   BlockUserDto,
+  RevalidateEventDto,
+  CheckInEventDto,
 } from './dto/event.dto';
 
 const MESSAGE_LIMIT = 5; // Messages per person
-const EVENT_DURATION_HOURS = 2; // Default event duration
+const MIN_SCHEDULE_HOURS = 2; // Minimum hours ahead for scheduling
+const MAX_SCHEDULE_DAYS = 7; // Maximum days ahead for scheduling
+const REVALIDATION_MINUTES_BEFORE = 30; // Send revalidation notification 30min before
+const REVALIDATION_TIMEOUT_MINUTES = 10; // User has 10min to respond
+const HOME_DISTANCE_KM = 10; // Creator must be within 10km of event location
+const CHECK_IN_DISTANCE_METERS = 100; // Users must be within 100m to check in
 
 @Injectable()
 export class EventsService {
@@ -54,20 +61,34 @@ export class EventsService {
       throw new ForbiddenException('Your account is temporarily suspended from creating events');
     }
 
-    // Check if user already has an active event
+    // Check if user already has an active/scheduled event
     const existingEvent = await this.db.query.events.findFirst({
       where: and(
         eq(events.creatorId, userId),
-        eq(events.status, 'active')
+        inArray(events.status, ['scheduled', 'matched', 'revalidation_pending', 'active', 'on_site_partial', 'on_site_confirmed'])
       ),
     });
 
     if (existingEvent) {
-      throw new BadRequestException('You already have an active event. Cancel it first.');
+      throw new BadRequestException('You already have an active or scheduled event. Cancel it first.');
     }
 
-    // Calculate expiration based on time of day
-    const expiresAt = this.calculateExpiration();
+    // Validate scheduled time
+    const scheduledStart = new Date(dto.scheduledStartTime);
+    const now = new Date();
+    const minScheduleTime = new Date(now.getTime() + MIN_SCHEDULE_HOURS * 60 * 60 * 1000);
+    const maxScheduleTime = new Date(now.getTime() + MAX_SCHEDULE_DAYS * 24 * 60 * 60 * 1000);
+
+    if (scheduledStart < minScheduleTime) {
+      throw new BadRequestException(`Event must be scheduled at least ${MIN_SCHEDULE_HOURS} hours in advance`);
+    }
+
+    if (scheduledStart > maxScheduleTime) {
+      throw new BadRequestException(`Event cannot be scheduled more than ${MAX_SCHEDULE_DAYS} days in advance`);
+    }
+
+    // Set expiration to 1 hour before scheduled start (for finding matches)
+    const expiresAt = new Date(scheduledStart.getTime() - 60 * 60 * 1000);
 
     // Create event
     const [event] = await this.db
@@ -80,6 +101,9 @@ export class EventsService {
         hubLocation: dto.hubLocation,
         hubAddress: dto.hubAddress,
         activityType: dto.activityType,
+        scheduledStartTime: scheduledStart,
+        duration: dto.duration,
+        status: 'scheduled',
         expiresAt,
       })
       .returning();
@@ -104,8 +128,8 @@ export class EventsService {
     // Query events with distance calculation
     const nearbyEvents = await this.db.query.events.findMany({
       where: and(
-        eq(events.status, 'active'),
-        gte(events.expiresAt, new Date()),
+        eq(events.status, 'scheduled'), // Only show scheduled events (not yet matched)
+        gte(events.scheduledStartTime, new Date()), // Future events only
         // Exclude own events and blocked users
         sql`${events.creatorId} != ${userId}`,
         blocked.length > 0 ? sql`${events.creatorId} NOT IN (${blocked})` : undefined,
@@ -151,8 +175,8 @@ export class EventsService {
     const hubEvents = await this.db.query.events.findMany({
       where: and(
         eq(events.hubId, dto.hubId),
-        eq(events.status, 'active'),
-        gte(events.expiresAt, new Date()),
+        eq(events.status, 'scheduled'),
+        gte(events.scheduledStartTime, new Date()),
         sql`${events.creatorId} != ${userId}`,
         blocked.length > 0 ? sql`${events.creatorId} NOT IN (${blocked})` : undefined,
         dto.activityType ? eq(events.activityType, dto.activityType) : undefined
@@ -189,16 +213,16 @@ export class EventsService {
       throw new NotFoundException('Event not found');
     }
 
-    if (event.status !== 'active') {
-      throw new BadRequestException('Event is no longer active');
+    if (event.status !== 'scheduled') {
+      throw new BadRequestException('Event is no longer available for requests');
     }
 
     if (event.creatorId === userId) {
       throw new BadRequestException('You cannot join your own event');
     }
 
-    if (event.expiresAt < new Date()) {
-      throw new BadRequestException('Event has expired');
+    if (event.scheduledStartTime < new Date()) {
+      throw new BadRequestException('Event has already started');
     }
 
     // Check if already requested
@@ -405,7 +429,7 @@ export class EventsService {
     const myEvents = await this.db.query.events.findMany({
       where: and(
         sql`(${events.creatorId} = ${userId} OR ${events.participantId} = ${userId})`,
-        inArray(events.status, ['active', 'matched'])
+        inArray(events.status, ['scheduled', 'matched', 'revalidation_pending', 'active', 'on_site_partial', 'on_site_confirmed'])
       ),
       with: {
         creator: {
@@ -426,7 +450,7 @@ export class EventsService {
         },
         chat: true,
       },
-      orderBy: (events, { desc }) => [desc(events.createdAt)],
+      orderBy: (events, { asc }) => [asc(events.scheduledStartTime)],
     });
 
     return myEvents;
@@ -598,7 +622,7 @@ export class EventsService {
       throw new ForbiddenException('You can only cancel your own events');
     }
 
-    if (event.status !== 'active' && event.status !== 'matched') {
+    if (!['scheduled', 'matched', 'revalidation_pending', 'active'].includes(event.status)) {
       throw new BadRequestException('Event cannot be cancelled');
     }
 
@@ -622,6 +646,224 @@ export class EventsService {
   }
 
   // ============================================
+  // REVALIDATION (T-30min check)
+  // ============================================
+
+  async revalidateEvent(userId: string, eventId: string, dto: RevalidateEventDto) {
+    const event = await this.db.query.events.findFirst({
+      where: eq(events.id, eventId),
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.creatorId !== userId) {
+      throw new ForbiddenException('Only the event creator can revalidate');
+    }
+
+    if (event.status !== 'revalidation_pending') {
+      throw new BadRequestException('Event is not in revalidation state');
+    }
+
+    if (!dto.confirmed) {
+      // Creator declined - cancel event
+      await this.db
+        .update(events)
+        .set({
+          status: 'cancelled_no_revalidation',
+          revalidationRespondedAt: new Date(),
+          revalidationConfirmed: false,
+        })
+        .where(eq(events.id, eventId));
+
+      // Notify participant
+      if (event.participantId) {
+        await this.notificationsService.sendEventCancelled(event.participantId, event, userId);
+        this.notificationsGateway.emitEventCancelled(event.participantId, {
+          eventId: event.id,
+          event,
+        });
+      }
+
+      await this.incrementStats(userId, { eventsCancelled: 1 });
+      return { message: 'Event cancelled due to no revalidation' };
+    }
+
+    // Check distance from event location (must be within 10km)
+    const userLocation = dto.location;
+    const eventLocation = event.hubLocation;
+    const distance = this.calculateDistance(
+      userLocation.lat,
+      userLocation.lng,
+      eventLocation.lat,
+      eventLocation.lng
+    );
+
+    if (distance > HOME_DISTANCE_KM * 1000) {
+      // Too far - cancel event
+      await this.db
+        .update(events)
+        .set({
+          status: 'cancelled_geo_mismatch',
+          revalidationRespondedAt: new Date(),
+          revalidationConfirmed: false,
+          revalidationLocation: userLocation,
+        })
+        .where(eq(events.id, eventId));
+
+      // Notify participant
+      if (event.participantId) {
+        await this.notificationsService.sendEventCancelled(event.participantId, event, userId);
+        this.notificationsGateway.emitEventCancelled(event.participantId, {
+          eventId: event.id,
+          event,
+        });
+      }
+
+      await this.incrementStats(userId, { eventsCancelled: 1 });
+      return {
+        message: 'Event cancelled - you are too far from the event location',
+        distance: Math.round(distance / 1000),
+        maxDistance: HOME_DISTANCE_KM
+      };
+    }
+
+    // Revalidation confirmed and user is close enough
+    await this.db
+      .update(events)
+      .set({
+        status: 'active', // Transition to active, waiting for scheduled time
+        revalidationRespondedAt: new Date(),
+        revalidationConfirmed: true,
+        revalidationLocation: userLocation,
+      })
+      .where(eq(events.id, eventId));
+
+    // Notify participant
+    if (event.participantId) {
+      await this.notificationsService.sendRevalidationConfirmed(event.participantId, event);
+    }
+
+    return { message: 'Event revalidated successfully. See you soon!' };
+  }
+
+  // ============================================
+  // CHECK-IN (when users arrive at location)
+  // ============================================
+
+  async checkInEvent(userId: string, eventId: string, dto: CheckInEventDto) {
+    const event = await this.db.query.events.findFirst({
+      where: eq(events.id, eventId),
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.creatorId !== userId && event.participantId !== userId) {
+      throw new ForbiddenException('You are not part of this event');
+    }
+
+    if (event.status !== 'active' && event.status !== 'on_site_partial') {
+      throw new BadRequestException('Event is not active for check-in');
+    }
+
+    const isCreator = event.creatorId === userId;
+
+    // Check if already checked in
+    if (isCreator && event.creatorCheckInStatus === 'checked_in') {
+      throw new BadRequestException('You have already checked in');
+    }
+    if (!isCreator && event.participantCheckInStatus === 'checked_in') {
+      throw new BadRequestException('You have already checked in');
+    }
+
+    // Check distance from event location (must be within 100m)
+    const userLocation = dto.location;
+    const eventLocation = event.hubLocation;
+    const distance = this.calculateDistance(
+      userLocation.lat,
+      userLocation.lng,
+      eventLocation.lat,
+      eventLocation.lng
+    );
+
+    if (distance > CHECK_IN_DISTANCE_METERS) {
+      throw new BadRequestException(
+        `You must be within ${CHECK_IN_DISTANCE_METERS}m of the event location to check in. You are ${Math.round(distance)}m away.`
+      );
+    }
+
+    // Update check-in status
+    const now = new Date();
+    const updateData: any = {};
+
+    if (isCreator) {
+      updateData.creatorCheckInStatus = 'checked_in';
+      updateData.creatorCheckInAt = now;
+      updateData.creatorCheckInLocation = userLocation;
+    } else {
+      updateData.participantCheckInStatus = 'checked_in';
+      updateData.participantCheckInAt = now;
+      updateData.participantCheckInLocation = userLocation;
+    }
+
+    // Determine new status
+    const otherUserCheckedIn = isCreator
+      ? event.participantCheckInStatus === 'checked_in'
+      : event.creatorCheckInStatus === 'checked_in';
+
+    if (otherUserCheckedIn) {
+      // Both checked in - event fully confirmed!
+      updateData.status = 'on_site_confirmed';
+    } else {
+      // First check-in
+      updateData.status = 'on_site_partial';
+    }
+
+    await this.db
+      .update(events)
+      .set(updateData)
+      .where(eq(events.id, eventId));
+
+    // Get user details for notification
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: {
+        firstName: true,
+      },
+    });
+
+    // Notify other user
+    const otherUserId = isCreator ? event.participantId : event.creatorId;
+    if (otherUserId) {
+      if (otherUserCheckedIn) {
+        // Both checked in - send "both on site" notification
+        await this.notificationsService.sendBothCheckedIn(otherUserId, event, user?.firstName);
+        await this.notificationsService.sendBothCheckedIn(userId, event, user?.firstName); // Also notify current user
+        this.notificationsGateway.emitBothCheckedIn(otherUserId, { eventId: event.id });
+        this.notificationsGateway.emitBothCheckedIn(userId, { eventId: event.id });
+      } else {
+        // First check-in - notify other user
+        await this.notificationsService.sendUserCheckedIn(otherUserId, event, userId, user?.firstName);
+        this.notificationsGateway.emitUserCheckedIn(otherUserId, {
+          eventId: event.id,
+          userId,
+          userName: user?.firstName,
+        });
+      }
+    }
+
+    return {
+      message: otherUserCheckedIn
+        ? 'You are both on site. Good meal!'
+        : 'Check-in successful. Waiting for the other person...',
+      status: updateData.status,
+    };
+  }
+
+  // ============================================
   // COMPLETE EVENT & SUBMIT FEEDBACK
   // ============================================
   
@@ -638,8 +880,8 @@ export class EventsService {
       throw new ForbiddenException('You are not part of this event');
     }
 
-    if (event.status !== 'matched') {
-      throw new BadRequestException('Event must be matched to submit feedback');
+    if (!['matched', 'active', 'on_site_partial', 'on_site_confirmed'].includes(event.status)) {
+      throw new BadRequestException('Event must be active or completed to submit feedback');
     }
 
     const toUserId = event.creatorId === userId ? event.participantId : event.creatorId;
@@ -832,24 +1074,11 @@ export class EventsService {
   private async lockChat(chatId: string) {
     await this.db
       .update(eventChats)
-      .set({ 
-        isLocked: true, 
-        lockedAt: new Date() 
+      .set({
+        isLocked: true,
+        lockedAt: new Date()
       })
       .where(eq(eventChats.id, chatId));
-  }
-
-  private calculateExpiration(): Date {
-    const now = new Date();
-    const hour = now.getHours();
-    
-    let hoursToAdd: number;
-    if (hour >= 6 && hour < 12) hoursToAdd = 1; // Morning
-    else if (hour >= 12 && hour < 18) hoursToAdd = 2; // Afternoon
-    else if (hour >= 18 && hour < 24) hoursToAdd = 1.5; // Evening
-    else hoursToAdd = 0.5; // Late night
-    
-    return new Date(now.getTime() + hoursToAdd * 60 * 60 * 1000);
   }
 
   private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

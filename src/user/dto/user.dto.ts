@@ -70,6 +70,26 @@ export class UpdateInterestsDto {
   interests: string[];
 }
 
+export class UpdateLanguagesDto {
+  @ApiProperty({
+    example: ['1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d', '2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e'],
+    description: 'Array of language UUIDs to associate with the user'
+  })
+  @IsArray()
+  @IsString({ each: true })
+  languages: string[];
+}
+
+export class UpdateCountriesDto {
+  @ApiProperty({
+    example: ['3d4e5f6a-7b8c-9d0e-1f2a-3b4c5d6e7f8a', '4e5f6a7b-8c9d-0e1f-2a3b-4c5d6e7f8a9b'],
+    description: 'Array of country UUIDs to associate with the user'
+  })
+  @IsArray()
+  @IsString({ each: true })
+  countries: string[];
+}
+
 export class CompleteProfileDto {
   @ApiProperty({ example: 'John' })
   @IsString()
@@ -132,6 +152,24 @@ export class CompleteProfileDto {
   @IsArray()
   @IsString({ each: true })
   interests?: string[];
+
+  @ApiPropertyOptional({
+    example: ['1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d'],
+    description: 'Array of language UUIDs'
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  languages?: string[];
+
+  @ApiPropertyOptional({
+    example: ['3d4e5f6a-7b8c-9d0e-1f2a-3b4c5d6e7f8a'],
+    description: 'Array of country UUIDs'
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  countries?: string[];
 }
 
 export class UserResponseDto {
@@ -188,6 +226,12 @@ export class UserResponseDto {
 
   @ApiPropertyOptional()
   interests?: Array<{ id: string; name: string; icon: string }>;
+
+  @ApiPropertyOptional()
+  languages?: Array<{ id: string; name: string; icon: string }>;
+
+  @ApiPropertyOptional()
+  countries?: Array<{ id: string; name: string; icon: string }>;
 }
 
 export class UpdateLocationDto {

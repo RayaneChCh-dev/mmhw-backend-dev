@@ -146,6 +146,112 @@ export class NotificationsService {
   }
 
   /**
+   * Send revalidation request notification (T-30min)
+   * @param creatorId - Event creator's user ID
+   * @param event - Event details
+   */
+  async sendRevalidationRequest(creatorId: string, event: any) {
+    try {
+      const title = '⏰ Event Revalidation Required';
+      const body = `Your event is starting in 30 minutes at ${event.hubName}. Are you still going?`;
+      const data = {
+        type: 'revalidation_request',
+        eventId: event.id,
+        scheduledStartTime: event.scheduledStartTime,
+      };
+
+      await this.sendPushNotification(creatorId, title, body, data);
+    } catch (error) {
+      this.logger.error(`Failed to send revalidation request notification: ${error.message}`);
+    }
+  }
+
+  /**
+   * Send notification when creator confirms revalidation
+   * @param participantId - Participant to notify
+   * @param event - Event details
+   */
+  async sendRevalidationConfirmed(participantId: string, event: any) {
+    try {
+      const title = '✅ Event Confirmed';
+      const body = `The creator confirmed attendance for ${event.activityType} at ${event.hubName}. See you soon!`;
+      const data = {
+        type: 'revalidation_confirmed',
+        eventId: event.id,
+      };
+
+      await this.sendPushNotification(participantId, title, body, data);
+    } catch (error) {
+      this.logger.error(`Failed to send revalidation confirmed notification: ${error.message}`);
+    }
+  }
+
+  /**
+   * Send notification when a user checks in
+   * @param recipientId - User receiving the notification
+   * @param event - Event details
+   * @param checkedInUserId - User who checked in
+   * @param checkedInUserName - Name of user who checked in
+   */
+  async sendUserCheckedIn(recipientId: string, event: any, checkedInUserId: string, checkedInUserName?: string) {
+    try {
+      const title = '📍 Partner Arrived';
+      const body = `${checkedInUserName || 'Your partner'} is on site at ${event.hubName}, awaiting for you`;
+      const data = {
+        type: 'user_checked_in',
+        eventId: event.id,
+        checkedInUserId,
+      };
+
+      await this.sendPushNotification(recipientId, title, body, data, checkedInUserId);
+    } catch (error) {
+      this.logger.error(`Failed to send user checked in notification: ${error.message}`);
+    }
+  }
+
+  /**
+   * Send notification when both users check in
+   * @param userId - User to notify
+   * @param event - Event details
+   * @param otherUserName - Name of the other user
+   */
+  async sendBothCheckedIn(userId: string, event: any, otherUserName?: string) {
+    try {
+      const title = '🎉 You are both on site!';
+      const body = `Good ${event.activityType}!`;
+      const data = {
+        type: 'both_checked_in',
+        eventId: event.id,
+      };
+
+      await this.sendPushNotification(userId, title, body, data);
+    } catch (error) {
+      this.logger.error(`Failed to send both checked in notification: ${error.message}`);
+    }
+  }
+
+  /**
+   * Send feedback reminder notification when event duration expires
+   * @param userId - User to notify
+   * @param event - Event details
+   * @param otherUserName - Name of the other user
+   */
+  async sendFeedbackReminder(userId: string, event: any, otherUserName?: string) {
+    try {
+      const title = '⭐ How was your experience?';
+      const body = `Your ${event.activityType} at ${event.hubName} has ended. Please rate your experience${otherUserName ? ` with ${otherUserName}` : ''}!`;
+      const data = {
+        type: 'feedback_reminder',
+        eventId: event.id,
+      };
+
+      await this.sendPushNotification(userId, title, body, data);
+    } catch (error) {
+      this.logger.error(`Failed to send feedback reminder notification: ${error.message}`);
+    }
+  }
+
+  /**
    * Get all valid push tokens for a user (from all their devices)
    * Excludes the sender if senderId is provided
    * @param userId - User ID to get tokens for

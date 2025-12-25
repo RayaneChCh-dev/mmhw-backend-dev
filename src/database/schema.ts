@@ -19,18 +19,29 @@ import { sql } from 'drizzle-orm/sql';
 export const userRoleEnum = pgEnum('user_role', ['user', 'admin', 'moderator']);
 export const accountTypeEnum = pgEnum('account_type', ['email', 'google', 'apple']);
 export const mediaTypeEnum = pgEnum('media_type', ['image', 'video']);
-export const eventStatusEnum = pgEnum('event_status', ['active', 'matched', 'completed', 'cancelled', 'expired']);
+export const eventStatusEnum = pgEnum('event_status', [
+  'scheduled',
+  'matched',
+  'revalidation_pending',
+  'active',
+  'on_site_partial',
+  'on_site_confirmed',
+  'completed',
+  'cancelled',
+  'cancelled_no_revalidation',
+  'cancelled_geo_mismatch',
+  'expired'
+]);
 export const eventActivityEnum = pgEnum('event_activity', ['coffee', 'cowork', 'meal', 'drinks', 'walk']);
 export const eventRequestStatusEnum = pgEnum('event_request_status', ['pending', 'accepted', 'declined', 'cancelled']);
 export const feedbackRatingEnum = pgEnum('feedback_rating', ['positive', 'neutral', 'negative']);
+export const checkInStatusEnum = pgEnum('check_in_status', ['pending', 'checked_in', 'no_show']);
 
 // Users Table
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   emailVerified: boolean('email_verified').default(false),
-  phone: varchar('phone', { length: 20 }),
-  phoneVerified: boolean('phone_verified').default(false),
   password: text('password').notNull(),
   firstName: varchar('first_name', { length: 100 }),
   lastName: varchar('last_name', { length: 100 }),
@@ -122,6 +133,44 @@ export const userInterests = pgTable('user_interests', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// User Languages
+export const languages = pgTable('languages', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: varchar('name', { length: 100 }).notNull().unique(),
+  icon: varchar('icon', { length: 10 }),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const userLanguages = pgTable('user_languages', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  languageId: uuid('language_id')
+    .notNull()
+    .references(() => languages.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// User Countries
+export const countries = pgTable('countries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: varchar('name', { length: 100 }).notNull().unique(),
+  icon: varchar('icon', { length: 10 }),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const userCountries = pgTable('user_countries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  countryId: uuid('country_id')
+    .notNull()
+    .references(() => countries.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
 // Refresh Tokens
 export const refreshTokens = pgTable('refresh_tokens', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -188,31 +237,53 @@ export const events = pgTable('events', {
   creatorId: uuid('creator_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
-  
+
   // Hub information (from Google Places)
   hubId: varchar('hub_id', { length: 255 }).notNull(), // Google Places ID
   hubName: varchar('hub_name', { length: 255 }).notNull(),
   hubType: varchar('hub_type', { length: 50 }).notNull(), // restaurant, cafe, bar, etc.
   hubLocation: json('hub_location').notNull().$type<{ lat: number; lng: number }>(),
   hubAddress: text('hub_address'),
-  
+
   // Event details
   activityType: eventActivityEnum('activity_type').notNull(),
-  status: eventStatusEnum('status').default('active').notNull(),
-  
+  status: eventStatusEnum('status').default('scheduled').notNull(),
+
+  // Scheduled event timing
+  scheduledStartTime: timestamp('scheduled_start_time').notNull(), // When event is scheduled to start
+  duration: integer('duration').notNull(), // Duration in minutes
+
   // Participant info
   participantId: uuid('participant_id').references(() => users.id, { onDelete: 'cascade' }),
   matchedAt: timestamp('matched_at'),
   completedAt: timestamp('completed_at'),
-  
-  // Timing
-  expiresAt: timestamp('expires_at').notNull(),
+
+  // Revalidation (T-30min check)
+  revalidationSentAt: timestamp('revalidation_sent_at'),
+  revalidationRespondedAt: timestamp('revalidation_responded_at'),
+  revalidationConfirmed: boolean('revalidation_confirmed'),
+  revalidationLocation: json('revalidation_location').$type<{ lat: number; lng: number }>(), // Creator's location at revalidation
+
+  // Check-in tracking
+  creatorCheckInStatus: checkInStatusEnum('creator_check_in_status').default('pending'),
+  participantCheckInStatus: checkInStatusEnum('participant_check_in_status').default('pending'),
+  creatorCheckInAt: timestamp('creator_check_in_at'),
+  participantCheckInAt: timestamp('participant_check_in_at'),
+  creatorCheckInLocation: json('creator_check_in_location').$type<{ lat: number; lng: number }>(),
+  participantCheckInLocation: json('participant_check_in_location').$type<{ lat: number; lng: number }>(),
+
+  // Feedback reminder tracking
+  feedbackReminderSentAt: timestamp('feedback_reminder_sent_at'),
+
+  // Timing (legacy expiresAt kept for backwards compatibility)
+  expiresAt: timestamp('expires_at').notNull(), // For scheduled events, this is when to give up if no match
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => ({
   statusIdx: index('idx_events_status').on(table.status),
   hubIdIdx: index('idx_events_hub_id').on(table.hubId),
   creatorIdx: index('idx_events_creator').on(table.creatorId),
+  scheduledStartIdx: index('idx_events_scheduled_start').on(table.scheduledStartTime),
   expiresIdx: index('idx_events_expires').on(table.expiresAt),
 }));
 
@@ -357,6 +428,15 @@ export const userDevices = pgTable('user_devices', {
   userIdx: index('idx_user_devices_user').on(table.userId),
 }));
 
+// System Configuration (for app settings)
+export const systemConfig = pgTable('system_config', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: varchar('key', { length: 100 }).notNull().unique(), // e.g., 'check_in_distance_meters', 'revalidation_time_minutes'
+  value: text('value').notNull(), // JSON stringified value
+  description: text('description'),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 // Blocked Users
 export const blockedUsers = pgTable('blocked_users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -407,6 +487,8 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   skills: many(userSkills),
   attitudes: many(userAttitudes),
   interests: many(userInterests),
+  languages: many(userLanguages),
+  countries: many(userCountries),
   refreshTokens: many(refreshTokens),
   sessions: many(sessions),
   locations: many(userLocations),
@@ -476,6 +558,36 @@ export const userInterestsRelations = relations(userInterests, ({ one }) => ({
   interest: one(interests, {
     fields: [userInterests.interestId],
     references: [interests.id],
+  }),
+}));
+
+export const languagesRelations = relations(languages, ({ many }) => ({
+  users: many(userLanguages),
+}));
+
+export const userLanguagesRelations = relations(userLanguages, ({ one }) => ({
+  user: one(users, {
+    fields: [userLanguages.userId],
+    references: [users.id],
+  }),
+  language: one(languages, {
+    fields: [userLanguages.languageId],
+    references: [languages.id],
+  }),
+}));
+
+export const countriesRelations = relations(countries, ({ many }) => ({
+  users: many(userCountries),
+}));
+
+export const userCountriesRelations = relations(userCountries, ({ one }) => ({
+  user: one(users, {
+    fields: [userCountries.userId],
+    references: [users.id],
+  }),
+  country: one(countries, {
+    fields: [userCountries.countryId],
+    references: [countries.id],
   }),
 }));
 

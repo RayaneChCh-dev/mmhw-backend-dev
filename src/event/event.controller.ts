@@ -32,6 +32,8 @@ import {
   GetPendingRequestsDto,
   ReportUserDto,
   BlockUserDto,
+  RevalidateEventDto,
+  CheckInEventDto,
 } from './dto/event.dto';
 
 @ApiTags('Events')
@@ -255,5 +257,43 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Returns user stats' })
   async getUserStats(@Request() req) {
     return this.eventsService.getUserStats(req.user.userId);
+  }
+
+  // ============================================
+  // REVALIDATE EVENT (T-30min check)
+  // ============================================
+
+  @Post(':eventId/revalidate')
+  @ApiOperation({ summary: 'Revalidate event attendance (T-30min check)' })
+  @ApiResponse({ status: 200, description: 'Revalidation successful' })
+  @ApiResponse({ status: 400, description: 'Event is not in revalidation state or user too far' })
+  @ApiResponse({ status: 403, description: 'Only creator can revalidate' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiParam({ name: 'eventId', description: 'Event ID' })
+  async revalidateEvent(
+    @Request() req,
+    @Param('eventId') eventId: string,
+    @Body() dto: RevalidateEventDto,
+  ) {
+    return this.eventsService.revalidateEvent(req.user.userId, eventId, dto);
+  }
+
+  // ============================================
+  // CHECK-IN TO EVENT
+  // ============================================
+
+  @Post(':eventId/check-in')
+  @ApiOperation({ summary: 'Check in to event when arriving at location' })
+  @ApiResponse({ status: 200, description: 'Check-in successful' })
+  @ApiResponse({ status: 400, description: 'Event not active or user too far from location' })
+  @ApiResponse({ status: 403, description: 'Not part of this event' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiParam({ name: 'eventId', description: 'Event ID' })
+  async checkInEvent(
+    @Request() req,
+    @Param('eventId') eventId: string,
+    @Body() dto: CheckInEventDto,
+  ) {
+    return this.eventsService.checkInEvent(req.user.userId, eventId, dto);
   }
 }
