@@ -368,11 +368,11 @@ export class EventsService {
   // ============================================
 
   async getPendingRequests(userId: string, dto: GetPendingRequestsDto) {
-    // First, get all active events owned by the user
+    // First, get all scheduled events owned by the user
     const userEventsQuery = this.db.query.events.findMany({
       where: and(
         eq(events.creatorId, userId),
-        eq(events.status, 'active'),
+        eq(events.status, 'scheduled'),
         dto.eventId ? eq(events.id, dto.eventId) : undefined
       ),
       columns: { id: true },
