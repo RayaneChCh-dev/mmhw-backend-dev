@@ -17,6 +17,7 @@ import {
 import { eq, and, gte, lte, sql, isNull, inArray } from 'drizzle-orm';
 import {
   CreateEventDto,
+  CreateImmediateEventDto,
   CreateEventRequestDto,
   RespondToEventRequestDto,
   SendEventMessageDto,
@@ -40,6 +41,7 @@ const REVALIDATION_MINUTES_BEFORE = 30; // Send revalidation notification 30min 
 const REVALIDATION_TIMEOUT_MINUTES = 10; // User has 10min to respond
 const HOME_DISTANCE_KM = 10; // Creator must be within 10km of event location
 const CHECK_IN_DISTANCE_METERS = 100; // Users must be within 100m to check in
+const IMMEDIATE_EVENT_DURATION_HOURS = 2; // Immediate events last 2 hours
 
 @Injectable()
 export class EventsService {
@@ -51,9 +53,9 @@ export class EventsService {
   ) {}
 
   // ============================================
-  // CREATE EVENT
+  // CREATE EVENT (SCHEDULED)
   // ============================================
-  
+
   async createEvent(userId: string, dto: CreateEventDto) {
     // Check if user has suspension
     const stats = await this.getUserStats(userId);
@@ -101,9 +103,61 @@ export class EventsService {
         hubLocation: dto.hubLocation,
         hubAddress: dto.hubAddress,
         activityType: dto.activityType,
+        eventType: 'scheduled',
         scheduledStartTime: scheduledStart,
         duration: dto.duration,
         status: 'scheduled',
+        expiresAt,
+      })
+      .returning();
+
+    // Update user stats
+    await this.incrementStats(userId, { eventsCreated: 1 });
+    await this.addPoints(userId, 5); // 5 points for creating event
+
+    return this.enrichEventWithUser(event);
+  }
+
+  // ============================================
+  // CREATE EVENT (IMMEDIATE)
+  // ============================================
+
+  async createImmediateEvent(userId: string, dto: CreateImmediateEventDto) {
+    // Check if user has suspension
+    const stats = await this.getUserStats(userId);
+    if (stats?.isSuspended && stats.suspendedUntil && new Date(stats.suspendedUntil) > new Date()) {
+      throw new ForbiddenException('Your account is temporarily suspended from creating events');
+    }
+
+    // Check if user already has an active event
+    const existingEvent = await this.db.query.events.findFirst({
+      where: and(
+        eq(events.creatorId, userId),
+        inArray(events.status, ['active', 'on_site_confirmed'])
+      ),
+    });
+
+    if (existingEvent) {
+      throw new BadRequestException('You already have an active immediate event. Cancel or complete it first.');
+    }
+
+    // Set expiration to 2 hours from now
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + IMMEDIATE_EVENT_DURATION_HOURS * 60 * 60 * 1000);
+
+    // Create immediate event - status is 'active' right away
+    const [event] = await this.db
+      .insert(events)
+      .values({
+        creatorId: userId,
+        hubId: dto.hubId,
+        hubName: dto.hubName,
+        hubType: dto.hubType,
+        hubLocation: dto.hubLocation,
+        hubAddress: dto.hubAddress,
+        activityType: dto.activityType,
+        eventType: 'immediate',
+        status: 'active',
         expiresAt,
       })
       .returning();
@@ -126,10 +180,15 @@ export class EventsService {
     const blocked = await this.getBlockedUserIds(userId);
 
     // Query events with distance calculation
+    // For scheduled events: status = 'scheduled', future events only
+    // For immediate events: status = 'active', eventType = 'immediate'
     const nearbyEvents = await this.db.query.events.findMany({
       where: and(
-        eq(events.status, 'scheduled'), // Only show scheduled events (not yet matched)
-        gte(events.scheduledStartTime, new Date()), // Future events only
+        sql`(
+          (${events.status} = 'scheduled' AND ${events.scheduledStartTime} >= ${new Date()})
+          OR
+          (${events.status} = 'active' AND ${events.eventType} = 'immediate')
+        )`,
         // Exclude own events and blocked users
         sql`${events.creatorId} != ${userId}`,
         blocked.length > 0 ? sql`${events.creatorId} NOT IN (${blocked})` : undefined,
@@ -213,7 +272,12 @@ export class EventsService {
       throw new NotFoundException('Event not found');
     }
 
-    if (event.status !== 'scheduled') {
+    // Check valid status for both event types
+    if (event.eventType === 'scheduled' && event.status !== 'scheduled') {
+      throw new BadRequestException('Event is no longer available for requests');
+    }
+
+    if (event.eventType === 'immediate' && event.status !== 'active') {
       throw new BadRequestException('Event is no longer available for requests');
     }
 
@@ -221,7 +285,8 @@ export class EventsService {
       throw new BadRequestException('You cannot join your own event');
     }
 
-    if (event.scheduledStartTime < new Date()) {
+    // For scheduled events, check if not already started
+    if (event.eventType === 'scheduled' && event.scheduledStartTime < new Date()) {
       throw new BadRequestException('Event has already started');
     }
 
@@ -303,11 +368,16 @@ export class EventsService {
       .where(eq(eventRequests.id, requestId));
 
     if (dto.response === 'accepted') {
+      // Determine new status based on event type
+      // For immediate events: go directly to 'on_site_confirmed' (simple flow)
+      // For scheduled events: go to 'matched' (with revalidation later)
+      const newStatus = request.event.eventType === 'immediate' ? 'on_site_confirmed' : 'matched';
+
       // Update event
       await this.db
         .update(events)
         .set({
-          status: 'matched',
+          status: newStatus,
           participantId: request.requesterId,
           matchedAt: new Date(),
         })

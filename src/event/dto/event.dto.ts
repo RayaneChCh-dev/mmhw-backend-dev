@@ -9,6 +9,11 @@ export enum EventActivity {
   WALK = 'walk',
 }
 
+export enum EventType {
+  IMMEDIATE = 'immediate',
+  SCHEDULED = 'scheduled',
+}
+
 export enum EventStatus {
   SCHEDULED = 'scheduled',
   MATCHED = 'matched',
@@ -43,7 +48,7 @@ export enum FeedbackRating {
 }
 
 // ============================================
-// CREATE EVENT
+// CREATE EVENT (SCHEDULED)
 // ============================================
 
 export class CreateEventDto {
@@ -85,6 +90,40 @@ export class CreateEventDto {
   @Min(30)
   @Max(480)
   duration: number;
+}
+
+// ============================================
+// CREATE EVENT (IMMEDIATE)
+// ============================================
+
+export class CreateImmediateEventDto {
+  @ApiProperty({ description: 'Google Places ID of the hub' })
+  @IsString()
+  @IsNotEmpty()
+  hubId: string;
+
+  @ApiProperty({ description: 'Name of the hub' })
+  @IsString()
+  @IsNotEmpty()
+  hubName: string;
+
+  @ApiProperty({ description: 'Type of hub (restaurant, cafe, bar, etc.)' })
+  @IsString()
+  @IsNotEmpty()
+  hubType: string;
+
+  @ApiProperty({ description: 'Hub location', example: { lat: 48.8566, lng: 2.3522 } })
+  @IsNotEmpty()
+  hubLocation: { lat: number; lng: number };
+
+  @ApiPropertyOptional({ description: 'Hub address' })
+  @IsOptional()
+  @IsString()
+  hubAddress?: string;
+
+  @ApiProperty({ enum: EventActivity, description: 'Type of activity' })
+  @IsEnum(EventActivity)
+  activityType: EventActivity;
 }
 
 // ============================================

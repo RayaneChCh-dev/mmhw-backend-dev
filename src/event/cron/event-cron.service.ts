@@ -30,19 +30,34 @@ export class EventsCronService {
       const now = new Date();
 
       // Find scheduled events that never got matched (past expiration time)
-      const expiredEvents = await this.db
+      const expiredScheduledEvents = await this.db
         .update(events)
         .set({ status: 'expired' })
         .where(
           and(
             eq(events.status, 'scheduled'),
+            eq(events.eventType, 'scheduled'),
             lte(events.expiresAt, now)
           )
         )
         .returning({ id: events.id });
 
-      if (expiredEvents.length > 0) {
-        this.logger.log(`Expired ${expiredEvents.length} unmatched events`);
+      // Find immediate events that expired without match (past 2 hours)
+      const expiredImmediateEvents = await this.db
+        .update(events)
+        .set({ status: 'expired' })
+        .where(
+          and(
+            eq(events.status, 'active'),
+            eq(events.eventType, 'immediate'),
+            lte(events.expiresAt, now)
+          )
+        )
+        .returning({ id: events.id });
+
+      const totalExpired = expiredScheduledEvents.length + expiredImmediateEvents.length;
+      if (totalExpired > 0) {
+        this.logger.log(`Expired ${totalExpired} events (${expiredScheduledEvents.length} scheduled, ${expiredImmediateEvents.length} immediate)`);
       }
     } catch (error) {
       this.logger.error('Failed to expire events', error);
@@ -51,6 +66,7 @@ export class EventsCronService {
 
   // ============================================
   // SEND REVALIDATION NOTIFICATIONS (Every minute)
+  // Only for SCHEDULED events
   // ============================================
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -59,10 +75,12 @@ export class EventsCronService {
       const now = new Date();
       const revalidationTime = new Date(now.getTime() + REVALIDATION_MINUTES_BEFORE * 60 * 1000);
 
-      // Find matched events that need revalidation (T-30min)
+      // Find matched SCHEDULED events that need revalidation (T-30min)
+      // Skip immediate events - they don't need revalidation
       const eventsNeedingRevalidation = await this.db.query.events.findMany({
         where: and(
           eq(events.status, 'matched'),
+          eq(events.eventType, 'scheduled'),
           lte(events.scheduledStartTime, revalidationTime),
           gte(events.scheduledStartTime, now)
         ),
@@ -294,6 +312,7 @@ export class EventsCronService {
 
   // ============================================
   // SEND FEEDBACK REMINDERS (Every 5 minutes)
+  // Only for SCHEDULED events (immediate events don't have scheduled times)
   // ============================================
 
   @Cron('*/5 * * * *')
@@ -301,11 +320,13 @@ export class EventsCronService {
     try {
       const now = new Date();
 
-      // Find events that are on_site_confirmed and past their end time (scheduledStartTime + duration)
+      // Find SCHEDULED events that are on_site_confirmed and past their end time (scheduledStartTime + duration)
       // but haven't had feedback reminder sent yet
+      // Immediate events don't get automatic feedback reminders - user submits when ready
       const eventsNeedingReminder = await this.db.query.events.findMany({
         where: and(
           eq(events.status, 'on_site_confirmed'),
+          eq(events.eventType, 'scheduled'),
           isNull(events.feedbackReminderSentAt)
         ),
         with: {

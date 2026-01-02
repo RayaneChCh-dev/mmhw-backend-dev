@@ -23,6 +23,7 @@ import { EventsService } from './event.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateEventDto,
+  CreateImmediateEventDto,
   CreateEventRequestDto,
   RespondToEventRequestDto,
   SendEventMessageDto,
@@ -44,11 +45,11 @@ export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
   // ============================================
-  // CREATE EVENT
+  // CREATE EVENT (SCHEDULED)
   // ============================================
 
   @Post()
-  @ApiOperation({ summary: 'Create a new event at a hub' })
+  @ApiOperation({ summary: 'Create a new scheduled event at a hub' })
   @ApiResponse({ status: 201, description: 'Event created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - User already has active event' })
   @ApiResponse({ status: 403, description: 'Forbidden - User is suspended' })
@@ -57,6 +58,22 @@ export class EventsController {
     @Body() dto: CreateEventDto,
   ) {
     return this.eventsService.createEvent(req.user.userId, dto);
+  }
+
+  // ============================================
+  // CREATE EVENT (IMMEDIATE)
+  // ============================================
+
+  @Post('immediate')
+  @ApiOperation({ summary: 'Create an immediate event (starts right away)' })
+  @ApiResponse({ status: 201, description: 'Immediate event created successfully' })
+  @ApiResponse({ status: 400, description: 'Bad request - User already has active event' })
+  @ApiResponse({ status: 403, description: 'Forbidden - User is suspended' })
+  async createImmediateEvent(
+    @Request() req,
+    @Body() dto: CreateImmediateEventDto,
+  ) {
+    return this.eventsService.createImmediateEvent(req.user.userId, dto);
   }
 
   // ============================================

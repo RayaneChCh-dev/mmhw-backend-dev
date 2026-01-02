@@ -19,6 +19,7 @@ import { sql } from 'drizzle-orm/sql';
 export const userRoleEnum = pgEnum('user_role', ['user', 'admin', 'moderator']);
 export const accountTypeEnum = pgEnum('account_type', ['email', 'google', 'apple']);
 export const mediaTypeEnum = pgEnum('media_type', ['image', 'video']);
+export const eventTypeEnum = pgEnum('event_type', ['immediate', 'scheduled']);
 export const eventStatusEnum = pgEnum('event_status', [
   'scheduled',
   'matched',
@@ -246,12 +247,13 @@ export const events = pgTable('events', {
   hubAddress: text('hub_address'),
 
   // Event details
+  eventType: eventTypeEnum('event_type').default('scheduled').notNull(), // 'immediate' or 'scheduled'
   activityType: eventActivityEnum('activity_type').notNull(),
   status: eventStatusEnum('status').default('scheduled').notNull(),
 
-  // Scheduled event timing
-  scheduledStartTime: timestamp('scheduled_start_time').notNull(), // When event is scheduled to start
-  duration: integer('duration').notNull(), // Duration in minutes
+  // Scheduled event timing (optional for immediate events)
+  scheduledStartTime: timestamp('scheduled_start_time'), // When event is scheduled to start (required for scheduled, null for immediate)
+  duration: integer('duration'), // Duration in minutes (required for scheduled, null for immediate)
 
   // Participant info
   participantId: uuid('participant_id').references(() => users.id, { onDelete: 'cascade' }),
