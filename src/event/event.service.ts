@@ -1,4 +1,4 @@
-import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { DATABASE_CONNECTION } from '../database/database.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
@@ -14,7 +14,7 @@ import {
   userReports,
   users
 } from '../database/schema';
-import { eq, and, gte, lte, sql, isNull, inArray } from 'drizzle-orm';
+import { eq, and, or, gte, lte, sql, isNull, inArray } from 'drizzle-orm';
 import {
   CreateEventDto,
   CreateImmediateEventDto,
@@ -45,6 +45,8 @@ const IMMEDIATE_EVENT_DURATION_HOURS = 2; // Immediate events last 2 hours
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     @Inject(DATABASE_CONNECTION) private db: any,
     private notificationsService: NotificationsService,
@@ -368,10 +370,9 @@ export class EventsService {
       .where(eq(eventRequests.id, requestId));
 
     if (dto.response === 'accepted') {
-      // Determine new status based on event type
-      // For immediate events: go directly to 'on_site_confirmed' (simple flow)
-      // For scheduled events: go to 'matched' (with revalidation later)
-      const newStatus = request.event.eventType === 'immediate' ? 'on_site_confirmed' : 'matched';
+      // Both immediate and scheduled events now use the same request/approval flow
+      // All events go to 'matched' status after acceptance
+      const newStatus = 'matched';
 
       // Update event
       await this.db
@@ -442,13 +443,18 @@ export class EventsService {
     const userEventsQuery = this.db.query.events.findMany({
       where: and(
         eq(events.creatorId, userId),
-        eq(events.status, 'scheduled'),
+        or(
+          eq(events.status, 'scheduled'),
+          eq(events.status, 'active'), // Also include active events
+        ),
         dto.eventId ? eq(events.id, dto.eventId) : undefined
       ),
       columns: { id: true },
     });
 
     const userEvents = await userEventsQuery;
+
+    this.logger.debug(`[GET_PENDING_REQUESTS] User ${userId} has ${userEvents.length} events (scheduled/active)`);
 
     if (userEvents.length === 0) {
       return [];
@@ -487,6 +493,8 @@ export class EventsService {
       },
       orderBy: (eventRequests, { desc }) => [desc(eventRequests.createdAt)],
     });
+
+    this.logger.debug(`[GET_PENDING_REQUESTS] Found ${pendingRequests.length} pending requests for user ${userId}`);
 
     return pendingRequests;
   }

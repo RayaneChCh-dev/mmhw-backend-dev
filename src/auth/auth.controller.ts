@@ -23,6 +23,8 @@ import {
   EnableMfaDto,
   VerifyMfaDto,
   AuthResponseDto,
+  RegisterDeviceDto,
+  LogoutDto,
 } from './dto/auth.dto';
 
 @ApiTags('Authentication')
@@ -150,5 +152,35 @@ export class AuthController {
     const mfaToken = authorization.substring(7); // Remove 'Bearer ' prefix
 
     return this.authService.verifyMfaLogin(mfaToken, verifyMfaDto.code);
+  }
+
+  @Post('register-device')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Register device for push notifications' })
+  @ApiResponse({ status: 200, description: 'Device registered successfully' })
+  async registerDevice(@Request() req, @Body() registerDeviceDto: RegisterDeviceDto) {
+    return this.authService.registerDevice(req.user.userId, registerDeviceDto);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout from device' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully' })
+  async logout(@Request() req, @Body() logoutDto: LogoutDto) {
+    return this.authService.logout(req.user.userId, logoutDto);
+  }
+
+  @Post('devices')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all user devices' })
+  @ApiResponse({ status: 200, description: 'Returns list of user devices' })
+  async getUserDevices(@Request() req) {
+    return this.authService.getUserDevices(req.user.userId);
   }
 }

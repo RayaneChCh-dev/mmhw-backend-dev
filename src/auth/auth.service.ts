@@ -13,7 +13,7 @@ import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
 import { eq, and } from 'drizzle-orm';
 import { DATABASE_CONNECTION } from '../database/database.module';
-import { users, otpCodes, refreshTokens, sessions } from '../database/schema';
+import { users, otpCodes, refreshTokens, sessions, userDevices } from '../database/schema';
 import {
   SignUpDto,
   SignInDto,
@@ -21,6 +21,8 @@ import {
   ResetPasswordDto,
   ForgotPasswordDto,
   AuthResponseDto,
+  RegisterDeviceDto,
+  LogoutDto,
 } from './dto/auth.dto';
 
 @Injectable()
@@ -549,5 +551,85 @@ export class AuthService {
   private sanitizeUser(user: any) {
     const { password, mfaSecret, ...sanitized } = user;
     return sanitized;
+  }
+
+  // ============================================
+  // DEVICE & PUSH TOKEN MANAGEMENT
+  // ============================================
+
+  async registerDevice(userId: string, dto: RegisterDeviceDto): Promise<{ message: string }> {
+    try {
+      // CRITICAL: Remove this push token from ALL other users first
+      // This prevents the previous user from receiving the new user's notifications
+      await this.db
+        .delete(userDevices)
+        .where(eq(userDevices.pushToken, dto.pushToken));
+
+      this.logger.debug(`[DEVICE] Removed push token ${dto.pushToken.substring(0, 20)}... from all users`);
+
+      // Now register/update device for current user
+      await this.db
+        .insert(userDevices)
+        .values({
+          userId,
+          deviceId: dto.deviceId,
+          pushToken: dto.pushToken,
+          deviceType: dto.deviceType,
+          deviceName: dto.deviceName,
+          lastUsedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [userDevices.userId, userDevices.deviceId],
+          set: {
+            pushToken: dto.pushToken,
+            deviceType: dto.deviceType,
+            deviceName: dto.deviceName,
+            lastUsedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+
+      this.logger.log(`[DEVICE] Registered device ${dto.deviceId} for user ${userId}`);
+
+      return { message: 'Device registered successfully' };
+    } catch (error) {
+      this.logger.error(`[DEVICE] Failed to register device: ${error.message}`);
+      throw new BadRequestException('Failed to register device');
+    }
+  }
+
+  async logout(userId: string, dto: LogoutDto): Promise<{ message: string }> {
+    try {
+      // Remove device from user's devices
+      await this.db
+        .delete(userDevices)
+        .where(and(
+          eq(userDevices.userId, userId),
+          eq(userDevices.deviceId, dto.deviceId)
+        ));
+
+      this.logger.log(`[LOGOUT] Removed device ${dto.deviceId} for user ${userId}`);
+
+      // Optionally revoke all refresh tokens for this user
+      // (Uncomment if you want to force logout from all sessions)
+      /*
+      await this.db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(refreshTokens.userId, userId));
+      */
+
+      return { message: 'Logged out successfully' };
+    } catch (error) {
+      this.logger.error(`[LOGOUT] Failed to logout: ${error.message}`);
+      throw new BadRequestException('Failed to logout');
+    }
+  }
+
+  async getUserDevices(userId: string) {
+    return this.db.query.userDevices.findMany({
+      where: eq(userDevices.userId, userId),
+      orderBy: (userDevices, { desc }) => [desc(userDevices.lastUsedAt)],
+    });
   }
 }

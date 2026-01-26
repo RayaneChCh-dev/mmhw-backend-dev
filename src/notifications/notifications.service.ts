@@ -289,7 +289,10 @@ export class NotificationsService {
       tokens.push(user.pushToken);
     }
 
-    return tokens.filter(token => token && Expo.isExpoPushToken(token));
+    return tokens.filter(token => {
+      // Accept both Expo push tokens and native device tokens (FCM for Android, APNs for iOS)
+      return token && typeof token === 'string' && token.length > 0;
+    });
   }
 
   /**
@@ -409,9 +412,9 @@ export class NotificationsService {
    */
   async updatePushToken(userId: string, pushToken: string) {
     try {
-      // Validate token format
-      if (!Expo.isExpoPushToken(pushToken)) {
-        throw new Error('Invalid Expo push token format');
+      // Accept both Expo push tokens and native device tokens
+      if (!pushToken || pushToken.length === 0) {
+        throw new Error('Invalid push token');
       }
 
       await this.db

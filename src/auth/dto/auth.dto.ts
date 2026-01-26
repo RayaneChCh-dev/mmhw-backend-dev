@@ -125,6 +125,37 @@ export class VerifyMfaDto {
   code: string;
 }
 
+export class RegisterDeviceDto {
+  @ApiProperty({ example: 'unique-device-id-12345', description: 'Unique device identifier' })
+  @IsString()
+  deviceId: string;
+
+  @ApiProperty({ example: 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]', description: 'Expo/FCM push token' })
+  @IsString()
+  pushToken: string;
+
+  @ApiProperty({ example: 'ios', description: 'Device type: ios, android, web' })
+  @IsString()
+  @IsOptional()
+  deviceType?: string;
+
+  @ApiProperty({ example: 'iPhone 13 Pro', description: 'Device name' })
+  @IsString()
+  @IsOptional()
+  deviceName?: string;
+}
+
+export class LogoutDto {
+  @ApiProperty({ example: 'unique-device-id-12345', description: 'Device ID to logout from' })
+  @IsString()
+  deviceId: string;
+
+  @ApiProperty({ example: 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]', description: 'Push token to remove' })
+  @IsString()
+  @IsOptional()
+  pushToken?: string;
+}
+
 export class AuthResponseDto {
   @ApiProperty()
   accessToken: string;
