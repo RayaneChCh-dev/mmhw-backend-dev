@@ -312,7 +312,8 @@ export class EventsCronService {
 
   // ============================================
   // SEND FEEDBACK REMINDERS (Every 5 minutes)
-  // Only for SCHEDULED events (immediate events don't have scheduled times)
+  // For SCHEDULED events: after end time
+  // For IMMEDIATE events: after expiration time (2 hours from creation)
   // ============================================
 
   @Cron('*/5 * * * *')
@@ -320,10 +321,8 @@ export class EventsCronService {
     try {
       const now = new Date();
 
-      // Find SCHEDULED events that are on_site_confirmed and past their end time (scheduledStartTime + duration)
-      // but haven't had feedback reminder sent yet
-      // Immediate events don't get automatic feedback reminders - user submits when ready
-      const eventsNeedingReminder = await this.db.query.events.findMany({
+      // Find SCHEDULED events that are on_site_confirmed and past their end time
+      const scheduledEventsNeedingReminder = await this.db.query.events.findMany({
         where: and(
           eq(events.status, 'on_site_confirmed'),
           eq(events.eventType, 'scheduled'),
@@ -345,54 +344,88 @@ export class EventsCronService {
         },
       });
 
-      for (const event of eventsNeedingReminder) {
+      for (const event of scheduledEventsNeedingReminder) {
         // Calculate end time (scheduledStartTime + duration in minutes)
         const endTime = new Date(event.scheduledStartTime);
         endTime.setMinutes(endTime.getMinutes() + event.duration);
 
         // If current time is past end time, send feedback reminder
         if (now >= endTime) {
-          // Mark feedback reminder as sent
-          await this.db
-            .update(events)
-            .set({
-              feedbackReminderSentAt: now,
-            })
-            .where(eq(events.id, event.id));
-
-          // Send notification to both users
-          await this.notificationsService.sendFeedbackReminder(
-            event.creatorId,
-            event,
-            event.participant?.firstName
-          );
-          this.notificationsGateway.emitFeedbackReminder(event.creatorId, {
-            eventId: event.id,
-            event,
-          });
-
-          if (event.participantId) {
-            await this.notificationsService.sendFeedbackReminder(
-              event.participantId,
-              event,
-              event.creator?.firstName
-            );
-            this.notificationsGateway.emitFeedbackReminder(event.participantId, {
-              eventId: event.id,
-              event,
-            });
-          }
-
-          this.logger.log(`Sent feedback reminder for event ${event.id}`);
+          await this.sendFeedbackReminderForEvent(event, now);
         }
       }
 
-      if (eventsNeedingReminder.length > 0) {
-        this.logger.log(`Processed ${eventsNeedingReminder.length} events for feedback reminders`);
+      // Find IMMEDIATE events that are matched or on_site_confirmed and past their expiration time
+      const immediateEventsNeedingReminder = await this.db.query.events.findMany({
+        where: and(
+          inArray(events.status, ['matched', 'on_site_confirmed']),
+          eq(events.eventType, 'immediate'),
+          lte(events.expiresAt, now),
+          isNull(events.feedbackReminderSentAt)
+        ),
+        with: {
+          creator: {
+            columns: {
+              id: true,
+              firstName: true,
+            },
+          },
+          participant: {
+            columns: {
+              id: true,
+              firstName: true,
+            },
+          },
+        },
+      });
+
+      for (const event of immediateEventsNeedingReminder) {
+        await this.sendFeedbackReminderForEvent(event, now);
+      }
+
+      const totalReminders = scheduledEventsNeedingReminder.length + immediateEventsNeedingReminder.length;
+      if (totalReminders > 0) {
+        this.logger.log(`Sent ${totalReminders} feedback reminders (${scheduledEventsNeedingReminder.length} scheduled, ${immediateEventsNeedingReminder.length} immediate)`);
       }
     } catch (error) {
       this.logger.error('Failed to send feedback reminders', error);
     }
+  }
+
+  private async sendFeedbackReminderForEvent(event: any, now: Date) {
+    // Mark feedback reminder as sent
+    await this.db
+      .update(events)
+      .set({
+        feedbackReminderSentAt: now,
+        status: 'on_site_confirmed', // Ensure it's in the right state
+      })
+      .where(eq(events.id, event.id));
+
+    // Send notification to both users
+    await this.notificationsService.sendFeedbackReminder(
+      event.creatorId,
+      event,
+      event.participant?.firstName
+    );
+    this.notificationsGateway.emitFeedbackReminder(event.creatorId, {
+      eventId: event.id,
+      event,
+    });
+
+    if (event.participantId) {
+      await this.notificationsService.sendFeedbackReminder(
+        event.participantId,
+        event,
+        event.creator?.firstName
+      );
+      this.notificationsGateway.emitFeedbackReminder(event.participantId, {
+        eventId: event.id,
+        event,
+      });
+    }
+
+    this.logger.log(`Sent feedback reminder for event ${event.id}`);
   }
 
   // ============================================

@@ -283,3 +283,14 @@ export class CheckInEventDto {
   @IsNotEmpty()
   location: { lat: number; lng: number };
 }
+
+// ============================================
+// COMPLETE EVENT (Mark ready for feedback)
+// ============================================
+
+export class CompleteEventDto {
+  @ApiPropertyOptional({ description: 'Optional note about the event' })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}

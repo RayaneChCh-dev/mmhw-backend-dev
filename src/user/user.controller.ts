@@ -23,6 +23,7 @@ import {
   UpdateLocationDto,
   UpdatePushTokenDto,
   UserResponseDto,
+  UserStatsResponseDto,
 } from './dto/user.dto';
 
 @ApiTags('Users')
@@ -114,6 +115,22 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Location history retrieved' })
   async getLocations(@Request() req) {
     return this.usersService.getLocations(req.user.userId);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get user stats with experience badge' })
+  @ApiResponse({ status: 200, description: 'User stats retrieved', type: UserStatsResponseDto })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserStats(@Request() req): Promise<UserStatsResponseDto> {
+    return this.usersService.getUserStats(req.user.userId);
+  }
+
+  @Get('stats/:id')
+  @ApiOperation({ summary: 'Get user stats by user ID' })
+  @ApiResponse({ status: 200, description: 'User stats retrieved', type: UserStatsResponseDto })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserStatsById(@Param('id') id: string): Promise<UserStatsResponseDto> {
+    return this.usersService.getUserStats(id);
   }
 
   @Delete('account')

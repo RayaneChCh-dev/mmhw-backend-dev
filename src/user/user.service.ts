@@ -21,6 +21,7 @@ import {
   userCountries,
   userLocations,
   userDevices,
+  userStats,
 } from '../database/schema';
 import {
   UpdateProfileDto,
@@ -33,6 +34,7 @@ import {
   UpdateLocationDto,
   UpdatePushTokenDto,
   UserResponseDto,
+  UserStatsResponseDto,
 } from './dto/user.dto';
 
 @Injectable()
@@ -517,5 +519,92 @@ export class UsersService {
 
     this.logger.debug(`Removed all push tokens for user ${userId}`);
     return { message: 'Push token removed successfully' };
+  }
+
+  /**
+   * Get user stats with experience badge calculation
+   */
+  async getUserStats(userId: string): Promise<UserStatsResponseDto> {
+    // Check if user exists
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Get or create user stats
+    let stats = await this.db.query.userStats.findFirst({
+      where: eq(userStats.userId, userId),
+    });
+
+    if (!stats) {
+      // Create stats if doesn't exist
+      [stats] = await this.db
+        .insert(userStats)
+        .values({ userId })
+        .returning();
+    }
+
+    // Calculate experience badge based on rating percentages
+    const totalRatings =
+      stats.positiveRatings + stats.neutralRatings + stats.negativeRatings;
+
+    let experienceBadge: {
+      type: 'positive' | 'neutral' | 'negative' | 'none';
+      percentage: number;
+    };
+
+    if (totalRatings === 0) {
+      // No ratings yet
+      experienceBadge = {
+        type: 'none',
+        percentage: 0,
+      };
+    } else {
+      // Calculate percentages
+      const positivePercentage = Math.round((stats.positiveRatings / totalRatings) * 100);
+      const neutralPercentage = Math.round((stats.neutralRatings / totalRatings) * 100);
+      const negativePercentage = Math.round((stats.negativeRatings / totalRatings) * 100);
+
+      // Determine dominant badge (highest percentage)
+      if (positivePercentage >= neutralPercentage && positivePercentage >= negativePercentage) {
+        experienceBadge = {
+          type: 'positive',
+          percentage: positivePercentage,
+        };
+      } else if (neutralPercentage >= positivePercentage && neutralPercentage >= negativePercentage) {
+        experienceBadge = {
+          type: 'neutral',
+          percentage: neutralPercentage,
+        };
+      } else {
+        experienceBadge = {
+          type: 'negative',
+          percentage: negativePercentage,
+        };
+      }
+    }
+
+    return {
+      totalPoints: stats.totalPoints,
+      currentStreak: stats.currentStreak,
+      longestStreak: stats.longestStreak,
+      lastMeetupDate: stats.lastMeetupDate,
+      eventsCreated: stats.eventsCreated,
+      eventsJoined: stats.eventsJoined,
+      eventsCompleted: stats.eventsCompleted,
+      eventsCancelled: stats.eventsCancelled,
+      noShows: stats.noShows,
+      positiveRatings: stats.positiveRatings,
+      neutralRatings: stats.neutralRatings,
+      negativeRatings: stats.negativeRatings,
+      experienceBadge,
+      reportsReceived: stats.reportsReceived,
+      reportsMade: stats.reportsMade,
+      isSuspended: stats.isSuspended,
+      suspendedUntil: stats.suspendedUntil,
+    };
   }
 }

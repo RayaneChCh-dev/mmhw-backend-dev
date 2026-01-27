@@ -286,3 +286,62 @@ export class UpdatePushTokenDto {
   @IsString()
   deviceName?: string;
 }
+
+export class UserStatsResponseDto {
+  @ApiProperty({ example: 100, description: 'Total points earned' })
+  totalPoints: number;
+
+  @ApiProperty({ example: 5, description: 'Current meetup streak (consecutive days)' })
+  currentStreak: number;
+
+  @ApiProperty({ example: 10, description: 'Longest meetup streak' })
+  longestStreak: number;
+
+  @ApiPropertyOptional({ example: '2024-01-15', description: 'Last meetup date' })
+  lastMeetupDate?: Date;
+
+  @ApiProperty({ example: 15, description: 'Number of events created' })
+  eventsCreated: number;
+
+  @ApiProperty({ example: 20, description: 'Number of events joined' })
+  eventsJoined: number;
+
+  @ApiProperty({ example: 25, description: 'Number of events completed' })
+  eventsCompleted: number;
+
+  @ApiProperty({ example: 2, description: 'Number of events cancelled' })
+  eventsCancelled: number;
+
+  @ApiProperty({ example: 0, description: 'Number of no-shows' })
+  noShows: number;
+
+  @ApiProperty({ example: 18, description: 'Number of positive ratings received' })
+  positiveRatings: number;
+
+  @ApiProperty({ example: 5, description: 'Number of neutral ratings received' })
+  neutralRatings: number;
+
+  @ApiProperty({ example: 2, description: 'Number of negative ratings received' })
+  negativeRatings: number;
+
+  @ApiProperty({
+    example: { type: 'positive', percentage: 72 },
+    description: 'Dominant experience badge based on rating percentages'
+  })
+  experienceBadge: {
+    type: 'positive' | 'neutral' | 'negative' | 'none';
+    percentage: number;
+  };
+
+  @ApiProperty({ example: 0, description: 'Number of reports received' })
+  reportsReceived: number;
+
+  @ApiProperty({ example: 0, description: 'Number of reports made' })
+  reportsMade: number;
+
+  @ApiProperty({ example: false, description: 'Is account suspended' })
+  isSuspended: boolean;
+
+  @ApiPropertyOptional({ example: null, description: 'Suspended until date' })
+  suspendedUntil?: Date;
+}

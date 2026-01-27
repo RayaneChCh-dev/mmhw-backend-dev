@@ -32,6 +32,7 @@ import {
   BlockUserDto,
   RevalidateEventDto,
   CheckInEventDto,
+  CompleteEventDto,
 } from './dto/event.dto';
 
 const MESSAGE_LIMIT = 5; // Messages per person
@@ -370,9 +371,9 @@ export class EventsService {
       .where(eq(eventRequests.id, requestId));
 
     if (dto.response === 'accepted') {
-      // Both immediate and scheduled events now use the same request/approval flow
-      // All events go to 'matched' status after acceptance
-      const newStatus = 'matched';
+      // Immediate events go directly to feedback-ready state
+      // Scheduled events go to 'matched' and require revalidation + check-in
+      const newStatus = request.event.eventType === 'immediate' ? 'on_site_confirmed' : 'matched';
 
       // Update event
       await this.db
@@ -381,6 +382,14 @@ export class EventsService {
           status: newStatus,
           participantId: request.requesterId,
           matchedAt: new Date(),
+          // For immediate events, mark as if both users already checked in
+          ...(request.event.eventType === 'immediate' ? {
+            creatorCheckInStatus: 'checked_in',
+            participantCheckInStatus: 'checked_in',
+            creatorCheckInAt: new Date(),
+            participantCheckInAt: new Date(),
+            feedbackReminderSentAt: new Date(), // Mark ready for feedback
+          } : {}),
         })
         .where(eq(events.id, request.eventId));
 
@@ -429,6 +438,30 @@ export class EventsService {
         creatorName: creator?.firstName || 'The creator',
         event: request.event,
       });
+
+      // For immediate events, also send feedback reminder to both users right away
+      if (request.event.eventType === 'immediate') {
+        // Send feedback reminder to both creator and requester
+        await this.notificationsService.sendFeedbackReminder(
+          userId,
+          request.event,
+          request.requester?.firstName
+        );
+        this.notificationsGateway.emitFeedbackReminder(userId, {
+          eventId: request.event.id,
+          event: request.event,
+        });
+
+        await this.notificationsService.sendFeedbackReminder(
+          request.requesterId,
+          request.event,
+          creator?.firstName
+        );
+        this.notificationsGateway.emitFeedbackReminder(request.requesterId, {
+          eventId: request.event.id,
+          event: request.event,
+        });
+      }
     }
 
     return { message: `Request ${dto.response}` };
@@ -942,9 +975,92 @@ export class EventsService {
   }
 
   // ============================================
+  // COMPLETE EVENT (Mark ready for feedback)
+  // ============================================
+
+  async completeEvent(userId: string, eventId: string, dto: CompleteEventDto) {
+    const event = await this.db.query.events.findFirst({
+      where: eq(events.id, eventId),
+      with: {
+        creator: true,
+        participant: true,
+      },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.creatorId !== userId && event.participantId !== userId) {
+      throw new ForbiddenException('You are not part of this event');
+    }
+
+    // Event must be in a state where users have met or are meeting
+    if (!['matched', 'active', 'on_site_partial', 'on_site_confirmed'].includes(event.status)) {
+      throw new BadRequestException('Event must be active to mark as complete');
+    }
+
+    const now = new Date();
+
+    // For immediate events, mark feedback reminder as sent to trigger completion flow
+    // For scheduled events, check if event has actually happened
+    if (event.eventType === 'scheduled') {
+      // For scheduled events, ensure the scheduled time has passed
+      const endTime = new Date(event.scheduledStartTime);
+      endTime.setMinutes(endTime.getMinutes() + event.duration);
+
+      if (now < endTime) {
+        throw new BadRequestException('Cannot complete event before scheduled end time');
+      }
+    }
+
+    // Update event to signal completion and send feedback reminder
+    await this.db
+      .update(events)
+      .set({
+        status: 'on_site_confirmed', // Ensure it's in the right state for feedback
+        feedbackReminderSentAt: now, // Mark as ready for feedback
+      })
+      .where(eq(events.id, eventId));
+
+    // Send feedback reminder to both users
+    const otherUserId = event.creatorId === userId ? event.participantId : event.creatorId;
+    const otherUser = event.creatorId === userId ? event.participant : event.creator;
+    const currentUser = event.creatorId === userId ? event.creator : event.participant;
+
+    // Notify both users to submit feedback
+    await this.notificationsService.sendFeedbackReminder(
+      userId,
+      event,
+      otherUser?.firstName
+    );
+    this.notificationsGateway.emitFeedbackReminder(userId, {
+      eventId: event.id,
+      event,
+    });
+
+    if (otherUserId) {
+      await this.notificationsService.sendFeedbackReminder(
+        otherUserId,
+        event,
+        currentUser?.firstName
+      );
+      this.notificationsGateway.emitFeedbackReminder(otherUserId, {
+        eventId: event.id,
+        event,
+      });
+    }
+
+    return {
+      message: 'Event marked as complete. Please submit your feedback!',
+      status: 'on_site_confirmed'
+    };
+  }
+
+  // ============================================
   // COMPLETE EVENT & SUBMIT FEEDBACK
   // ============================================
-  
+
   async submitFeedback(userId: string, eventId: string, dto: SubmitEventFeedbackDto) {
     const event = await this.db.query.events.findFirst({
       where: eq(events.id, eventId),

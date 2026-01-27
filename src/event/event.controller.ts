@@ -35,6 +35,7 @@ import {
   BlockUserDto,
   RevalidateEventDto,
   CheckInEventDto,
+  CompleteEventDto,
 } from './dto/event.dto';
 
 @ApiTags('Events')
@@ -312,5 +313,24 @@ export class EventsController {
     @Body() dto: CheckInEventDto,
   ) {
     return this.eventsService.checkInEvent(req.user.userId, eventId, dto);
+  }
+
+  // ============================================
+  // COMPLETE EVENT (Mark ready for feedback)
+  // ============================================
+
+  @Post(':eventId/complete')
+  @ApiOperation({ summary: 'Mark event as complete and ready for feedback' })
+  @ApiResponse({ status: 200, description: 'Event marked as complete' })
+  @ApiResponse({ status: 400, description: 'Event cannot be completed yet' })
+  @ApiResponse({ status: 403, description: 'Not part of this event' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiParam({ name: 'eventId', description: 'Event ID' })
+  async completeEvent(
+    @Request() req,
+    @Param('eventId') eventId: string,
+    @Body() dto: CompleteEventDto,
+  ) {
+    return this.eventsService.completeEvent(req.user.userId, eventId, dto);
   }
 }
