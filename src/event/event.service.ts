@@ -371,9 +371,9 @@ export class EventsService {
       .where(eq(eventRequests.id, requestId));
 
     if (dto.response === 'accepted') {
-      // Immediate events go directly to feedback-ready state
-      // Scheduled events go to 'matched' and require revalidation + check-in
-      const newStatus = request.event.eventType === 'immediate' ? 'on_site_confirmed' : 'matched';
+      // Both immediate and scheduled events go to 'matched' initially
+      // Immediate events will skip revalidation and check-in, but stay as 'matched'
+      const newStatus = 'matched';
 
       // Update event
       await this.db
@@ -382,14 +382,6 @@ export class EventsService {
           status: newStatus,
           participantId: request.requesterId,
           matchedAt: new Date(),
-          // For immediate events, mark as if both users already checked in
-          ...(request.event.eventType === 'immediate' ? {
-            creatorCheckInStatus: 'checked_in',
-            participantCheckInStatus: 'checked_in',
-            creatorCheckInAt: new Date(),
-            participantCheckInAt: new Date(),
-            feedbackReminderSentAt: new Date(), // Mark ready for feedback
-          } : {}),
         })
         .where(eq(events.id, request.eventId));
 
@@ -438,30 +430,6 @@ export class EventsService {
         creatorName: creator?.firstName || 'The creator',
         event: request.event,
       });
-
-      // For immediate events, also send feedback reminder to both users right away
-      if (request.event.eventType === 'immediate') {
-        // Send feedback reminder to both creator and requester
-        await this.notificationsService.sendFeedbackReminder(
-          userId,
-          request.event,
-          request.requester?.firstName
-        );
-        this.notificationsGateway.emitFeedbackReminder(userId, {
-          eventId: request.event.id,
-          event: request.event,
-        });
-
-        await this.notificationsService.sendFeedbackReminder(
-          request.requesterId,
-          request.event,
-          creator?.firstName
-        );
-        this.notificationsGateway.emitFeedbackReminder(request.requesterId, {
-          eventId: request.event.id,
-          event: request.event,
-        });
-      }
     }
 
     return { message: `Request ${dto.response}` };
@@ -540,7 +508,7 @@ export class EventsService {
     const myEvents = await this.db.query.events.findMany({
       where: and(
         sql`(${events.creatorId} = ${userId} OR ${events.participantId} = ${userId})`,
-        inArray(events.status, ['scheduled', 'matched', 'revalidation_pending', 'active', 'on_site_partial', 'on_site_confirmed'])
+        inArray(events.status, ['scheduled', 'matched', 'revalidation_pending', 'active', 'on_site_partial', 'on_site_confirmed', 'completed'])
       ),
       with: {
         creator: {
@@ -606,6 +574,16 @@ export class EventsService {
               },
               orderBy: (messages, { asc }) => [asc(messages.createdAt)],
             },
+          },
+        },
+        feedback: {
+          columns: {
+            id: true,
+            fromUserId: true,
+            toUserId: true,
+            rating: true,
+            comment: true,
+            createdAt: true,
           },
         },
       },
@@ -1074,7 +1052,9 @@ export class EventsService {
       throw new ForbiddenException('You are not part of this event');
     }
 
-    if (!['matched', 'active', 'on_site_partial', 'on_site_confirmed'].includes(event.status)) {
+    // Allow feedback submission for matched, active, on_site_partial, on_site_confirmed, and completed events
+    // Note: Immediate events transition to 'completed' when feedback reminder is sent
+    if (!['matched', 'active', 'on_site_partial', 'on_site_confirmed', 'completed'].includes(event.status)) {
       throw new BadRequestException('Event must be active or completed to submit feedback');
     }
 
@@ -1117,31 +1097,33 @@ export class EventsService {
     });
 
     if (allFeedback.length === 2) {
-      // Both submitted → complete event
-      await this.db
-        .update(events)
-        .set({
-          status: 'completed',
-          completedAt: new Date(),
-        })
-        .where(eq(events.id, eventId));
+      // Both submitted → ensure event is marked as completed (if not already)
+      if (event.status !== 'completed') {
+        await this.db
+          .update(events)
+          .set({
+            status: 'completed',
+            completedAt: new Date(),
+          })
+          .where(eq(events.id, eventId));
 
-      // Award completion points and update streaks
-      await this.incrementStats(event.creatorId, { eventsCompleted: 1 });
-      await this.incrementStats(event.participantId, { eventsCompleted: 1 });
-      await this.addPoints(event.creatorId, 20);
-      await this.addPoints(event.participantId, 20);
-      await this.updateStreak(event.creatorId);
-      await this.updateStreak(event.participantId);
+        // Award completion points and update streaks only once
+        await this.incrementStats(event.creatorId, { eventsCompleted: 1 });
+        await this.incrementStats(event.participantId, { eventsCompleted: 1 });
+        await this.addPoints(event.creatorId, 20);
+        await this.addPoints(event.participantId, 20);
+        await this.updateStreak(event.creatorId);
+        await this.updateStreak(event.participantId);
 
-      // Check and notify for events and points milestones
-      const creatorStats = await this.getUserStats(event.creatorId);
-      const participantStats = await this.getUserStats(event.participantId);
+        // Check and notify for events and points milestones
+        const creatorStats = await this.getUserStats(event.creatorId);
+        const participantStats = await this.getUserStats(event.participantId);
 
-      await this.checkAndNotifyEventsMilestone(event.creatorId, creatorStats.eventsCompleted);
-      await this.checkAndNotifyEventsMilestone(event.participantId, participantStats.eventsCompleted);
-      await this.checkAndNotifyPointsMilestone(event.creatorId, creatorStats.totalPoints);
-      await this.checkAndNotifyPointsMilestone(event.participantId, participantStats.totalPoints);
+        await this.checkAndNotifyEventsMilestone(event.creatorId, creatorStats.eventsCompleted);
+        await this.checkAndNotifyEventsMilestone(event.participantId, participantStats.eventsCompleted);
+        await this.checkAndNotifyPointsMilestone(event.creatorId, creatorStats.totalPoints);
+        await this.checkAndNotifyPointsMilestone(event.participantId, participantStats.totalPoints);
+      }
     } else {
       // Only one user submitted feedback → send email to the other user
       const otherUserId = event.creatorId === userId ? event.participantId : event.creatorId;

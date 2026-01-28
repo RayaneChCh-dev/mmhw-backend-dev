@@ -355,10 +355,11 @@ export class EventsCronService {
         }
       }
 
-      // Find IMMEDIATE events that are matched or on_site_confirmed and past their expiration time
+      // Find IMMEDIATE events that are 'matched' and past their expiration time (2 hours)
+      // Note: Immediate events don't go through revalidation or check-in, so they stay 'matched' until feedback time
       const immediateEventsNeedingReminder = await this.db.query.events.findMany({
         where: and(
-          inArray(events.status, ['matched', 'on_site_confirmed']),
+          eq(events.status, 'matched'),
           eq(events.eventType, 'immediate'),
           lte(events.expiresAt, now),
           isNull(events.feedbackReminderSentAt)
@@ -393,12 +394,14 @@ export class EventsCronService {
   }
 
   private async sendFeedbackReminderForEvent(event: any, now: Date) {
-    // Mark feedback reminder as sent
+    // Mark feedback reminder as sent and transition to completed state
+    // For immediate events: matched -> completed (ready for feedback)
+    // For scheduled events: on_site_confirmed -> stay on_site_confirmed (ready for feedback)
     await this.db
       .update(events)
       .set({
         feedbackReminderSentAt: now,
-        status: 'on_site_confirmed', // Ensure it's in the right state
+        status: event.eventType === 'immediate' ? 'completed' : 'on_site_confirmed',
       })
       .where(eq(events.id, event.id));
 
@@ -438,10 +441,12 @@ export class EventsCronService {
       const now = new Date();
       const autoCompleteThreshold = new Date(now.getTime() - FEEDBACK_REMINDER_HOURS * 60 * 60 * 1000);
 
-      // Find events that had feedback reminder sent 24+ hours ago and still not completed
+      // Find SCHEDULED events that had feedback reminder sent 24+ hours ago and still not completed
+      // Note: Immediate events already transition to 'completed' when feedback reminder is sent
       const eventsToComplete = await this.db.query.events.findMany({
         where: and(
           eq(events.status, 'on_site_confirmed'),
+          eq(events.eventType, 'scheduled'),
           lte(events.feedbackReminderSentAt, autoCompleteThreshold)
         ),
         with: {
