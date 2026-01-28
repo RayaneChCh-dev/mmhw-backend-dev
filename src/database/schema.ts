@@ -37,6 +37,8 @@ export const eventActivityEnum = pgEnum('event_activity', ['coffee', 'cowork', '
 export const eventRequestStatusEnum = pgEnum('event_request_status', ['pending', 'accepted', 'declined', 'cancelled']);
 export const feedbackRatingEnum = pgEnum('feedback_rating', ['positive', 'neutral', 'negative']);
 export const checkInStatusEnum = pgEnum('check_in_status', ['pending', 'checked_in', 'no_show']);
+export const bugReportStatusEnum = pgEnum('bug_report_status', ['pending', 'in_progress', 'resolved', 'closed']);
+export const bugReportPriorityEnum = pgEnum('bug_report_priority', ['low', 'medium', 'high', 'critical']);
 
 // Users Table
 export const users = pgTable('users', {
@@ -802,10 +804,67 @@ export const messagesRelations = relations(messages, ({ one }) => ({
     fields: [messages.conversationId],
     references: [conversations.id],
   }),
-  
+
   // Message sender
   sender: one(users, {
     fields: [messages.senderId],
+    references: [users.id],
+  }),
+}));
+
+// ============================================
+// BUG REPORTS TABLE
+// ============================================
+
+export const bugReports = pgTable('bug_reports', {
+  id: uuid('id').defaultRandom().primaryKey(),
+
+  // Reporter
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+
+  // Content
+  title: varchar('title', { length: 255 }),
+  description: text('description').notNull(),
+
+  // Status and priority
+  status: bugReportStatusEnum('status').default('pending').notNull(),
+  priority: bugReportPriorityEnum('priority').default('medium').notNull(),
+
+  // Device and app info (optional, can be populated from user agent)
+  deviceInfo: json('device_info').$type<{
+    platform?: string;
+    osVersion?: string;
+    appVersion?: string;
+    deviceModel?: string;
+  }>(),
+
+  // Admin notes (for internal use)
+  adminNotes: text('admin_notes'),
+  resolvedBy: uuid('resolved_by').references(() => users.id),
+  resolvedAt: timestamp('resolved_at'),
+
+  // Timestamps
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  // Indexes for efficient queries
+  userIdx: index('idx_bug_reports_user').on(table.userId),
+  statusIdx: index('idx_bug_reports_status').on(table.status),
+  priorityIdx: index('idx_bug_reports_priority').on(table.priority),
+  createdIdx: index('idx_bug_reports_created').on(table.createdAt),
+}));
+
+export const bugReportsRelations = relations(bugReports, ({ one }) => ({
+  // Reporter
+  user: one(users, {
+    fields: [bugReports.userId],
+    references: [users.id],
+  }),
+  // Resolver (admin/moderator who resolved the issue)
+  resolver: one(users, {
+    fields: [bugReports.resolvedBy],
     references: [users.id],
   }),
 }));

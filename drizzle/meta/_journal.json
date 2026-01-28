@@ -99,6 +99,13 @@
       "when": 1767393050041,
       "tag": "0013_lovely_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1769569145708,
+      "tag": "0014_same_giant_man",
+      "breakpoints": true
     }
   ]
 }

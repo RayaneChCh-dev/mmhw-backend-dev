@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './user/user.module';
 import { EventsModule } from './event/event.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { BugReportsModule } from './bug-reports/bug-reports.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     UsersModule,
     EventsModule,
     NotificationsModule,
+    BugReportsModule,
   ],
   controllers: [],
   providers: [],
