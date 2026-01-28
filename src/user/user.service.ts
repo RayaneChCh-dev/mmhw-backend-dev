@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { eq, and, inArray, ne } from 'drizzle-orm';
 import { DATABASE_CONNECTION } from '../database/database.module';
+import { CloudinaryService } from '../common/services/cloudinary.service';
 import {
   users,
   skills,
@@ -41,7 +42,10 @@ import {
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  constructor(@Inject(DATABASE_CONNECTION) private db: any) {}
+  constructor(
+    @Inject(DATABASE_CONNECTION) private db: any,
+    private cloudinaryService: CloudinaryService,
+  ) {}
 
   async getProfile(userId: string): Promise<UserResponseDto> {
     const user = await this.db.query.users.findFirst({
@@ -79,7 +83,12 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    return this.formatUserResponse(user);
+    // Fetch user stats for event counts
+    const stats = await this.db.query.userStats.findFirst({
+      where: eq(userStats.userId, userId),
+    });
+
+    return this.formatUserResponse(user, stats);
   }
 
   async getUserById(userId: string): Promise<UserResponseDto> {
@@ -107,6 +116,47 @@ export class UsersService {
       .where(eq(users.id, userId));
 
     return this.getProfile(userId);
+  }
+
+  async uploadAvatar(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<{ avatarUrl: string }> {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    try {
+      // Delete old avatar from Cloudinary if it exists
+      if (user.avatar && user.avatarType === 'upload') {
+        const publicId = this.cloudinaryService.extractPublicIdFromUrl(user.avatar);
+        if (publicId) {
+          await this.cloudinaryService.deleteImage(publicId);
+        }
+      }
+
+      // Upload new avatar
+      const result = await this.cloudinaryService.uploadImage(file, 'avatars');
+
+      // Update user avatar in database
+      await this.db
+        .update(users)
+        .set({
+          avatar: result.secure_url,
+          avatarType: 'upload',
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+
+      return { avatarUrl: result.secure_url };
+    } catch (error) {
+      this.logger.error(`Failed to upload avatar for user ${userId}`, error);
+      throw new BadRequestException('Failed to upload avatar');
+    }
   }
 
   async completeProfile(
@@ -401,7 +451,7 @@ export class UsersService {
     );
   }
 
-  private formatUserResponse(user: any): UserResponseDto {
+  private formatUserResponse(user: any, stats?: any): UserResponseDto {
     const { password, mfaSecret, ...userData } = user;
 
     return {
@@ -411,6 +461,8 @@ export class UsersService {
       interests: user.interests?.map((ui: any) => ui.interest) || [],
       languages: user.languages?.map((ul: any) => ul.language) || [],
       countries: user.countries?.map((uc: any) => uc.country) || [],
+      eventsCreated: stats?.eventsCreated || 0,
+      eventsJoined: stats?.eventsJoined || 0,
     };
   }
 

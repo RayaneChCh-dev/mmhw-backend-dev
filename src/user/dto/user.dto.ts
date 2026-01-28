@@ -232,6 +232,12 @@ export class UserResponseDto {
 
   @ApiPropertyOptional()
   countries?: Array<{ id: string; name: string; icon: string }>;
+
+  @ApiPropertyOptional({ example: 10, description: 'Number of events created' })
+  eventsCreated?: number;
+
+  @ApiPropertyOptional({ example: 15, description: 'Number of events joined' })
+  eventsJoined?: number;
 }
 
 export class UpdateLocationDto {
